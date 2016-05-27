@@ -1,0 +1,42 @@
+{
+  "name": "lock_and_cache",
+  "version": "1.0.0",
+  "description": "Most caching libraries don't do locking, meaning that >1 process can be calculating a cached value at the same time. Since you presumably cache things because they cost CPU, database reads, or money, doesn't it make sense to lock while caching?",
+  "main": "index.js",
+  "keywords": [
+    "redlock",
+    "lock",
+    "cache",
+    "redis"
+  ],
+  "author": "Tristan Davies <npm@tristan.io>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/faradayio/lock_and_cache_js.git"
+  },
+  "scripts": {
+    "test": "NODE_ENV=test babel-node test.js",
+    "lint": "standard"
+  },
+  "devDependencies": {
+    "babel-cli": "^6.4.0",
+    "babel-eslint": "^6.0.0",
+    "babel-plugin-syntax-async-functions": "^6.5.0",
+    "babel-plugin-transform-regenerator": "^6.5.2",
+    "babel-preset-es2015": "^6.5.0",
+    "blue-tape": "^0.2.0",
+    "git-validate": "^2.1.4",
+    "standard": "^7.1.1"
+  },
+  "pre-commit": [
+    "lint"
+  ],
+  "dependencies": {
+    "redis": "^2.6.0-2",
+    "redlock": "^2.0.0"
+  },
+  "standard": {
+    "parser": "babel-eslint"
+  }
+}
