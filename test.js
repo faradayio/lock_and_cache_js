@@ -9,6 +9,14 @@ async function double (a) {
 
 const cachedDouble = cache.wrap(1, double)
 
+let undefExecutionCount = 0
+async function undef () {
+  undefExecutionCount++
+  return undefined
+}
+
+const cachedUndefined = cache.wrap(1, undef)
+
 function cachedStandaloneDouble (a) {
   return cache(['standaloneDouble', a], 1, async function () {
     executionCount++
@@ -48,4 +56,14 @@ test('fail', async function (t) {
   } catch (err) {
     t.equal(err, expectedErr, 'should propagate rejection error')
   }
+})
+
+test('basic', async function (t) {
+  undefExecutionCount = 0
+  let un = await cachedUndefined()
+  t.equal(un, undefined)
+  t.equal(undefExecutionCount, 1)
+  un = await cachedUndefined()
+  t.equal(un, undefined)
+  t.equal(undefExecutionCount, 1)
 })

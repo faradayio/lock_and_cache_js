@@ -9,6 +9,8 @@ function redisGet (client, key) {
         reject(err)
       } else if (value === null) {
         reject('key not found')
+      } else if (value === 'undefined') {
+        resolve(undefined)
       } else {
         resolve(JSON.parse(value))
       }
@@ -17,8 +19,14 @@ function redisGet (client, key) {
 }
 
 function redisSet (client, key, ttl, value) {
-  return new Promise(function lookup (resolve, reject) {
-    client.setex(key, ttl, JSON.stringify(value), function onSet (err) {
+  return new Promise(function set (resolve, reject) {
+    let storedValue
+    if (typeof value === 'undefined') {
+      storedValue = 'undefined'
+    } else {
+      storedValue = JSON.stringify(value)
+    }
+    client.setex(key, ttl, storedValue, function onSet (err) {
       if (err) {
         reject(err)
       } else {
