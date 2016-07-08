@@ -20,7 +20,7 @@ function redisGet (client, key) {
 
 function redisSet (client, key, ttl, value) {
   return new Promise(function set (resolve, reject) {
-    let storedValue
+    var storedValue
     if (typeof value === 'undefined') {
       storedValue = 'undefined'
     } else {
