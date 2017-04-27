@@ -2,6 +2,23 @@ var redis = require('redis')
 var Redlock = require('redlock')
 var assert = require('assert')
 
+const DEFAULT_REDIS_OPTIONS = {
+  retry_strategy (options) {
+    return Math.min(options.attempt * 100, 3000)
+  }
+}
+
+function defaults (opts, defs) {
+  let options = {}
+  for (let key in defs) {
+    options[key] = defs[key]
+  }
+  for (let key in opts) {
+    options[key] = opts[key]
+  }
+  return options
+}
+
 function redisGet (client, key) {
   return new Promise(function lookup (resolve, reject) {
     client.get(key, function onGet (err, value) {
@@ -133,6 +150,20 @@ lockAndCache.configure = function (servers, opts) {
     if (!clients) {
       clients = servers.map(function (server) {
         if (!Array.isArray(server)) server = [server]
+
+        if (typeof server[1] === 'object') {
+          server = [
+            server[0],
+            defaults(server[1], DEFAULT_REDIS_OPTIONS)
+          ].concat(server.slice(2))
+        } else if (typeof server[0] === 'object') {
+          server = [
+            defaults(server[0], DEFAULT_REDIS_OPTIONS)
+          ].concat(server.slice(1))
+        } else {
+          server = server.concat([DEFAULT_REDIS_OPTIONS])
+        }
+
         return redis.createClient.apply(redis, server)
       })
       redlock = new Redlock(clients, opts)
