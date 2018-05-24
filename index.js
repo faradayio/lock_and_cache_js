@@ -219,7 +219,7 @@ lockAndCache.configure = function (servers, opts) {
   return cache
 }
 
-module.exports = lockAndCache.configure(process.env.LOCK_URL, {
+module.exports = lockAndCache.configure(process.env.LOCK_URL || process.env.REDIS_URL, {
   cacheServer: process.env.REDIS_URL,
   driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || null,
   retryCount: Number(process.env.LOCK_RETRY_COUNT) || 36000,
