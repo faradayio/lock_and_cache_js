@@ -57,7 +57,7 @@ function lockAndCache (getLocker, key, ttl, work) {
   key = JSON.stringify(key)
 
   var locker = getLocker()
-  var client = locker[0]
+  var cacheClient = locker[0]
   var redlock = locker[1]
   var unref = locker[2]
 
@@ -84,7 +84,7 @@ function lockAndCache (getLocker, key, ttl, work) {
   }
 
   return (
-    redisGet(client, key)
+    redisGet(cacheClient, key)
       .catch(function onErr (err) {
         if (err !== 'key not found') throw err
         return (
@@ -92,11 +92,11 @@ function lockAndCache (getLocker, key, ttl, work) {
             .then(function onLock (_lock) {
               extendTimeout = setTimeout(extend, 2500)
               lock = _lock
-              return redisGet(client, key)
+              return redisGet(cacheClient, key)
             })
             .catch(function onErr (err) {
               if (err !== 'key not found') throw err
-              return work().then(redisSet.bind(null, client, key, ttl))
+              return work().then(redisSet.bind(null, cacheClient, key, ttl))
             })
         )
       })
@@ -119,14 +119,24 @@ lockAndCache.configure = function (servers, opts) {
   var refs = 0
   var cleanupTimeout
   var clients
+  var cacheClient
   var redlock
 
   if (!Array.isArray(servers)) servers = [servers]
+
+  var seperateCacheServer = !!opts.cacheServer
+  if (seperateCacheServer) {
+    servers.push(opts.cacheServer)
+    delete opts.cacheServer
+  }
 
   function tryToCleanUp () {
     if (refs === 0 && !cleanupTimeout && clients) {
       cleanupTimeout = setTimeout(function reap () {
         clients.forEach((c) => c.quit())
+        if (seperateCacheServer) {
+          cacheClient.quit()
+        }
         redlock = clients = cleanupTimeout = null
       }, process.env.NODE_ENV === 'test' ? 50 : 30000)
     }
@@ -167,9 +177,14 @@ lockAndCache.configure = function (servers, opts) {
         return redis.createClient.apply(redis, server)
       })
       redlock = new Redlock(clients, opts)
+      if (seperateCacheServer) {
+        cacheClient = clients.pop()
+      } else {
+        cacheClient = clients[0]
+      }
     }
 
-    return [clients[0], redlock, unref]
+    return [cacheClient, redlock, unref]
   }
 
   var cache = lockAndCache.bind(null, getLocker)
@@ -204,7 +219,8 @@ lockAndCache.configure = function (servers, opts) {
   return cache
 }
 
-module.exports = lockAndCache.configure(process.env.LOCK_URL || process.env.REDIS_URL, {
+module.exports = lockAndCache.configure(process.env.LOCK_URL, {
+  cacheServer: process.env.REDIS_URL,
   driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || null,
   retryCount: Number(process.env.LOCK_RETRY_COUNT) || 36000,
   retryDelay: Number(process.env.LOCK_RETRY_DELAY) || 100
