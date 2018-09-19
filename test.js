@@ -49,12 +49,14 @@ test('standalone', async function (t) {
 })
 
 test('fail', async function (t) {
-  let expectedErr = new Error()
+  const expectedErr = new Error('test me please')
   try {
     await cache('fail_test', 1, () => Promise.reject(expectedErr))
     t.fail('should not resolve')
   } catch (err) {
-    t.equal(err, expectedErr, 'should propagate rejection error')
+    for (let prop of ['name', 'message', 'stack']) {
+      t.equal(err[prop], expectedErr[prop], `should propagate rejection error ${prop}`)
+    }
   }
 })
 

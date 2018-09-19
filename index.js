@@ -8,6 +8,8 @@ const DEFAULT_REDIS_OPTIONS = {
   }
 }
 
+const ERROR_TTL = 1
+
 function defaults (opts, defs) {
   let options = {}
   for (let key in defs) {
@@ -94,9 +96,27 @@ function lockAndCache (getLocker, key, ttl, work) {
               lock = _lock
               return redisGet(cacheClient, key)
             })
-            .catch(function onErr (err) {
+            .catch(function onLockErr (err) {
               if (err !== 'key not found') throw err
-              return work().then(redisSet.bind(null, cacheClient, key, ttl))
+              return work().catch(function onWorkErr (err) {
+                ttl = ERROR_TTL
+                let serializedError
+                if (err instanceof Error) {
+                  serializedError = {}
+                  if (err.name) serializedError.name = err.name
+                  if (err.message) serializedError.message = err.message
+                  if (err.stack) serializedError.stack = err.stack
+                  Object.assign(serializedError, err) // retain custom properties
+                } else {
+                  serializedError = String(err)
+                }
+                return {
+                  __lock_and_cache_error__: true,
+                  err: serializedError
+                }
+              }).then(function onWorkDone (data) {
+                return redisSet(cacheClient, key, ttl, data)
+              })
             })
         )
       })
@@ -105,6 +125,15 @@ function lockAndCache (getLocker, key, ttl, work) {
         return cleanup()
       })
       .then(function onCleanup () {
+        if (typeof value === 'object' && value !== 'null' && value.__lock_and_cache_error__) {
+          if (typeof value.err === 'object') {
+            const err = new Error()
+            Object.assign(err, value.err)
+            throw err
+          } else {
+            throw new Error(value.err)
+          }
+        }
         return value
       })
       .catch(function (err) {
