@@ -46,12 +46,14 @@ As you can see, most caching libraries only take care of (1) and (4) (well, and 
 
 ## Setup
 
-Set these in your environment:
+Just setting REDIS_URL in your environment is enough.
+
+REDIS_URL=redis://redis:6379/2
+
+If you want to put the cache and the locks in different places (which is useful if you want to invalidate the cache without messing with any locks currently held), you can do:
 
 CACHE_URL=redis://redis:6379/2
 LOCK_URL=redis://redis:6379/3
-
-Deprecated: if these are not set, it will use REDIS_URL for both.
 
 ## Distributed locking
 
