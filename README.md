@@ -46,25 +46,14 @@ As you can see, most caching libraries only take care of (1) and (4) (well, and 
 
 ## Setup
 
-Since the url to your redis server is already in the REDIS_URL environment
-variable, no configuration is required.
+Just setting REDIS_URL in your environment is enough.
 
-If, somehow, you forgot to set up your environment variables, you can do so like
-this:
+REDIS_URL=redis://redis:6379/2
 
-```console
-REDIS_URL=redis://my-redis-host:6379 node myapp.js
-```
+If you want to put the cache and the locks in different places (which is useful if you want to invalidate the cache without messing with any locks currently held), you can do:
 
-If you are trapped in some sort of post-apocalyptic scenario and environment
-variables are not available to you at this time, or the times have changed and
-environment variables are no longer in vogue, consider using the `configure`
-function to connect to an arbitrary redis server.
-
-```js
-const lockAndCache = require('lock_and_cache')
-const cache = lockAndCache.configure('redis://localhost')
-```
+CACHE_URL=redis://redis:6379/2
+LOCK_URL=redis://redis:6379/3
 
 ## Distributed locking
 
