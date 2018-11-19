@@ -125,7 +125,7 @@ function lockAndCache (getLocker, key, ttl, work) {
         return cleanup()
       })
       .then(function onCleanup () {
-        if (typeof value === 'object' && value !== 'null' && value.__lock_and_cache_error__) {
+        if (typeof value === 'object' && value !== null && value.__lock_and_cache_error__) {
           if (typeof value.err === 'object') {
             const err = new Error()
             Object.assign(err, value.err)
