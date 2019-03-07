@@ -234,7 +234,7 @@ lockAndCache.configure = function (servers, opts) {
     assert.equal(typeof work, 'function', 'work should be function')
 
     var wrappedFn = function () {
-      var args = Array.prototype.slice.call(arguments, 0, work.length)
+      var args = Array.prototype.slice.call(arguments)
       var key = [name].concat(args)
       return cache(key, ttl, function doWork () {
         return Promise.resolve(work.apply(null, args))
