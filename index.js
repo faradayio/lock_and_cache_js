@@ -31,16 +31,22 @@ const DEFAULT_REDIS_LOCK_OPTS = {
   url: (process.env.LOCK_URL || process.env.REDIS_URL),
 }
 
+const DEFAULT_REDLOCK_OPTS = {
+  driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || null,
+  retryCount: Number(process.env.LOCK_RETRY_COUNT) || 36000,
+  retryDelay: Number(process.env.LOCK_RETRY_DELAY) || 100,
+}
+
 const DEFAULT_MEM_CACHE_OPTS = {
-      store: 'memory',
-      max: 10,
-      ttl: 30
+  store: 'memory',
+  max: 10,
+  ttl: 30
 }
 
 const DEFAULT_REDIS_CACHE_OPTS = {
-      store: redisStore,
-      url: (process.env.CACHE_URL || process.env.REDIS_URL),
-      ttl: 600
+  store: redisStore,
+  url: (process.env.CACHE_URL || process.env.REDIS_URL),
+  ttl: 600
 }
 
 
@@ -125,8 +131,8 @@ function closing (obj, cb) {
  */
 function tieredCache(memOpts, redisOpts) {
   return [
-    cacheManager.caching(Object.assign({}, DEFAULT_MEM_OPTS, memOpts)),
-    cacheManager.caching(Object.assign({}, DEFAULT_REDIS_OPTS, redisOpts)),
+    cacheManager.caching(Object.assign({}, DEFAULT_MEM_CACHE_OPTS, memOpts)),
+    cacheManager.caching(Object.assign({}, DEFAULT_REDIS_CACHE_OPTS, redisOpts)),
   ]
 }
 
@@ -148,22 +154,18 @@ class KeyNotFoundError extends Error {}
  */
 class LockAndCache {
   constructor(opts) {
+    let driftFactor, retryCount, retryDelay
     const {
       caches = tieredCache(),
       lockClients = [redis.createClient(DEFAULT_REDIS_LOCK_OPTS)],
-      lockOpts = {
-        driftFactor = Number(process.env.LOCK_DRIFT_FACTOR) || null,
-        retryCount = Number(process.env.LOCK_RETRY_COUNT) || 36000,
-        retryDelay = Number(process.env.LOCK_RETRY_DELAY) || 100,
-        ...restLockOpts
-      }
-    } = opts;
+      lockOpts: {...lockOpts},
+    } = opts || {};
     this._lockClients = lockClients
     this._redlock = new Redlock(lockClients, {
+      ...lockOpts,
       driftFactor,
       retryCount,
       retryDelay,
-      ...restLockOpts
     })
     this._cacheClients = (
       caches.map(cache => cache.store.getClient && cache.store.getClient())
@@ -176,38 +178,22 @@ class LockAndCache {
   }
 
   _redisGetTransform (value) {
-    if (value === null) {
-      throw new KeyNotFoundError(key)
-    } else if (value === 'undefined') {
-      return undefined
+    if (value === null) throw new KeyNotFoundError(key)
+    else if (value === 'undefined') return undefined
     return JSON.parse(value)
   }
 
   async _redisGet (key) {
-    return new Promise(function lookup (resolve, reject) {
-      this._cache.get(key, function onGet (err, value) {
-        if (err) {
-          reject(err)
-        }
-        resolve(this._redisGetTransform(value))
-      })
-    })
+    return await this._redisGetTransform(this._cache.get(key))
   }
 
   _redisSetTransform (value) {
-    if (typeof value === 'undefined') {
-      return 'undefined'
+    if (typeof value === 'undefined') return 'undefined'
     return JSON.stringify(value)
   }
 
   async _redisSet (key, value, ttl) {
-    return new Promise(function set (resolve, reject) {
-      this._cache.set(key, this._redisSetTransform(value), {ttl}, function onSet (err) {
-        if (err) {
-          reject(err)
-        resolve(value)
-      })
-    })
+      return await this._cache.set(key, this._redisSetTransform(value), {ttl})
   }
 
   close() {
@@ -267,7 +253,7 @@ class LockAndCache {
     if (typeof ttl !== 'undefined') console.warn('ttl is ignored')
     assert.equal(typeof work, 'function', 'work should be function')
 
-    var wrappedFn = function () {
+    var wrappedFn = () => {
       var args = Array.prototype.slice.call(arguments)
       var key = [name].concat(args)
       return this.get(key, ttl, function doWork () {
@@ -309,7 +295,7 @@ class LockAndCache {
     try {
       return await this._redisGet(key)
     }
-    catch err {
+    catch (err) {
       if (typeof err !== 'KeyNotFoundError') throw err
     }
 
@@ -324,13 +310,13 @@ class LockAndCache {
       try {
         return await this._redisGet(key)
       }
-      catch err {
+      catch (err) {
         if (typeof err !== 'KeyNotFoundError') throw err
       }
       try {
         value = await work()
       }
-      catch err {
+      catch (err) {
         ttl = ERROR_TTL
         value = this._errorFactory(err)
       }
@@ -347,12 +333,15 @@ class LockAndCache {
         } else {
           throw new Error(value.err)
         }
+      }
     }
   }
 }
 
+const default_cache = new LockAndCache()
 
-module.exports = LockAndCache().get
+module.exports = default_cache.get
+module.exports.wrap = default_cache.wrap.bind(default_cache)
 module.exports.LockAndCache = LockAndCache
 module.exports.tieredCache = tieredCache
 module.exports.closing = closing

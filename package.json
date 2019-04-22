@@ -20,14 +20,14 @@
     "lint": "standard"
   },
   "devDependencies": {
-    "babel-cli": "^6.4.0",
-    "babel-eslint": "^6.0.0",
-    "babel-plugin-syntax-async-functions": "^6.5.0",
-    "babel-plugin-transform-regenerator": "^6.5.2",
-    "babel-preset-es2015": "^6.5.0",
-    "blue-tape": "^0.2.0",
+    "@babel/cli": "^7.4.3",
+    "@babel/core": "^7.4.3",
+    "@babel/node": "^7.2.2",
+    "@babel/plugin-proposal-object-rest-spread": "^7.4.3",
+    "@babel/preset-env": "^7.4.3",
     "git-validate": "^2.1.4",
-    "standard": "^7.1.1"
+    "standard": "^7.1.1",
+    "tape": "^4.10.1"
   },
   "pre-commit": [
     "lint"

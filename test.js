@@ -1,4 +1,4 @@
-import test from 'blue-tape'
+import test from 'tape'
 import cache from './'
 
 let executionCount = 0
