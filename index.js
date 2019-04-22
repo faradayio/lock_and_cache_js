@@ -352,7 +352,7 @@ class LockAndCache {
 }
 
 
-module.exports = LockAndCache().lockAndCache
+module.exports = LockAndCache().get
 module.exports.LockAndCache = LockAndCache
 module.exports.tieredCache = tieredCache
 module.exports.closing = closing
