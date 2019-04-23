@@ -1,4 +1,4 @@
-import test from 'tape'
+import test from 'tape-promise/tape'
 import cache from './'
 
 let executionCount = 0
@@ -29,12 +29,16 @@ test('basic', async function (t) {
   let four = await cachedDouble(2)
   t.equal(four, 4)
   t.equal(executionCount, 1)
+  console.debug('get next thing')
   four = await cachedDouble(2)
+  console.debug('got next thing')
   t.equal(four, 4)
   t.equal(executionCount, 1)
+  console.debug('basic test done')
 })
 
 test('parallel', async function (t) {
+  console.debug('parallel test')
   executionCount = 0
   let results = await Promise.all([1, 4, 3, 3, 4, 1].map(cachedDouble))
   t.deepEqual(results, [2, 8, 6, 6, 8, 2])
@@ -60,7 +64,7 @@ test('fail', async function (t) {
   }
 })
 
-test('basic', async function (t) {
+test('undefined', async function (t) {
   undefExecutionCount = 0
   let un = await cachedUndefined()
   t.equal(un, undefined)

@@ -21,6 +21,7 @@ var redisStore = require('cache-manager-redis-store');
 
 const LOCK_TIMEOUT = 5000
 const LOCK_EXTEND_TIMEOUT = 2500
+const REDIS_CONN_IDLE_TIMEOUT = process.env.NODE_ENV === 'test' ? 2000 : 30000
 
 const ERROR_TTL = 1
 
@@ -28,14 +29,21 @@ const DEFAULT_REDIS_LOCK_OPTS = {
   retry_strategy (options) {
     return Math.min(options.attempt * 100, 3000)
   },
-  url: (process.env.LOCK_URL || process.env.REDIS_URL),
+  url: (process.env.LOCK_URL || process.env.REDIS_URL || '//localhost:6379'),
 }
 
-const DEFAULT_REDLOCK_OPTS = {
-  driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || null,
-  retryCount: Number(process.env.LOCK_RETRY_COUNT) || 36000,
-  retryDelay: Number(process.env.LOCK_RETRY_DELAY) || 100,
-}
+const DEFAULT_REDLOCK_OPTS = (
+  process.env.NODE_ENV === 'test' ?
+    {
+      driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || null,
+      retryCount: Number(process.env.LOCK_RETRY_COUNT) || 36000,
+      retryDelay: Number(process.env.LOCK_RETRY_DELAY) || 100,
+    }:{
+      driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || null,
+      retryCount: Number(process.env.LOCK_RETRY_COUNT) || 36000,
+      retryDelay: Number(process.env.LOCK_RETRY_DELAY) || 100,
+    }
+)
 
 const DEFAULT_MEM_CACHE_OPTS = {
   store: 'memory',
@@ -45,7 +53,7 @@ const DEFAULT_MEM_CACHE_OPTS = {
 
 const DEFAULT_REDIS_CACHE_OPTS = {
   store: redisStore,
-  url: (process.env.CACHE_URL || process.env.REDIS_URL),
+  url: (process.env.CACHE_URL || process.env.REDIS_URL || '//localhost:6379'),
   ttl: 600
 }
 
@@ -71,43 +79,51 @@ function closing (obj, cb) {
 }
 
 
-// Currently unused; but might still need it if explicit closing is hard
-// class RefCounter extends Function {
-//   // thanks to https://stackoverflow.com/a/40878674
-//   constructor (cb, cleanup, timeout) {
-//     super('...args', 'return this.__call__(...args)');
-//     that = this.bind(this)
-//     that._cb = cb
-//     that._cleanup = cleanup
-//     that._timout = timeout
-//     that._refs = 0
-//     that._timeoutHandle = null
-//     return that
-//   }
-//
-//   __call__ (...opts) {
-//     this._ref()
-//     try {
-//       this._cb(...opts)
-//     }
-//     finally {
-//       this._unref()
-//     }
-//   }
-//
-//   _ref () {
-//     clearTimeout(this._timeoutHandle)
-//     this._timeoutHandle = null
-//     this._refs++
-//   }
-//
-//   _unref () {
-//     this._refs--
-//     if (this._refs === 0 ) {
-//       this._timeoutHandle = setTimeout(this._cleanup, this._timeout)
-//     }
-//   }
-// }
+class RefCounter extends Function {
+  // thanks to https://stackoverflow.com/a/40878674
+  constructor (cb, cleanup, timeout) {
+    super('...args', 'return this.__call__(...args)');
+    const that = this.bind(this)
+    this._cb = cb
+    this._cleanup = cleanup
+    this._timeout = timeout
+    this._refs = 0
+    this._timeoutHandle = null
+    console.debug('refcounter timeout', timeout)
+    return that
+  }
+
+  __call__ (...opts) {
+    this._ref()
+    try {
+      this._cb(...opts)
+    }
+    finally {
+      this._unref()
+    }
+  }
+
+  _ref () {
+    console.debug('clear cleanup timeout')
+    clearTimeout(this._timeoutHandle)
+    this._timeoutHandle = null
+    this._refs++
+    console.debug('refs', this._refs)
+  }
+
+  _unref () {
+    this._refs--
+    console.debug('refs', this._refs)
+    if (this._refs === 0 ) {
+      console.debug('set cleanup timeout')
+      this._timeoutHandle = setTimeout(()=>{
+        console.debug('cleaning up')
+        this._cleanup()
+      }, this._timeout)
+    }
+  }
+}
+
 
 /**
  * Create an array of mem/redis caches suitable for making a multi-tier cache;
@@ -138,6 +154,7 @@ function tieredCache(memOpts, redisOpts) {
 
 
 class KeyNotFoundError extends Error {}
+class FinalizedError extends Error {}
 
 /**
  * LockAndCache
@@ -154,37 +171,43 @@ class KeyNotFoundError extends Error {}
  */
 class LockAndCache {
   constructor(opts) {
-    let driftFactor, retryCount, retryDelay
     const {
       caches = tieredCache(),
       lockClients = [redis.createClient(DEFAULT_REDIS_LOCK_OPTS)],
-      lockOpts: {...lockOpts},
+      lockOpts = DEFAULT_REDLOCK_OPTS,
     } = opts || {};
     this._lockClients = lockClients
-    this._redlock = new Redlock(lockClients, {
-      ...lockOpts,
-      driftFactor,
-      retryCount,
-      retryDelay,
-    })
+    this._redlock = new Redlock(lockClients, lockOpts)
     this._cacheClients = (
       caches.map(cache => cache.store.getClient && cache.store.getClient())
         .filter(cache => !!cache)
     )
     this._cache = cacheManager.multiCaching(caches);
-    // Uncomment to use refcounting finalization
-    // this.get = new RefCounter(this._get, this.close);
-    // this._cleanupTimeout = undefined;
+    // this.get = this._get
+    this.get = new RefCounter(this._get.bind(this), this.close.bind(this), REDIS_CONN_IDLE_TIMEOUT);
+    console.debug('conn timeout', REDIS_CONN_IDLE_TIMEOUT)
+    this.finalized = false;
+    console.debug("New cache", opts)
   }
 
   _redisGetTransform (value) {
-    if (value === null) throw new KeyNotFoundError(key)
-    else if (value === 'undefined') return undefined
-    return JSON.parse(value)
+    if (value === 'undefined') return undefined
+    try {
+      return JSON.parse(value)
+    }
+    catch (err) {
+      console.error(err, value)
+      throw err
+    }
   }
 
   async _redisGet (key) {
-    return await this._redisGetTransform(this._cache.get(key))
+    let value = await this._cache.get(key)
+    if (value === null || typeof value === 'undefined')
+      throw new KeyNotFoundError(key)
+    value = this._redisGetTransform(value);
+    console.debug('got', value, 'for', key)
+    return value;
   }
 
   _redisSetTransform (value) {
@@ -193,56 +216,28 @@ class LockAndCache {
   }
 
   async _redisSet (key, value, ttl) {
-      return await this._cache.set(key, this._redisSetTransform(value), {ttl})
+      let v = await this._cache.set(key, this._redisSetTransform(value), {ttl})
+      console.debug('set', value, 'for', key)
+      return v
   }
 
   close() {
+    console.debug("closing connections");
     [...this._lockClients, ...this._cacheClients].forEach((c) => c.quit())
+    this.finalized = true;
   }
 
-  // open() {
-  //   let cacheClient;
-  //   let redlock;
-  //
-  //   if (!clients) {
-  //     clients = servers.map(function (server) {
-  //       if (!Array.isArray(server)) server = [server]
-  //
-  //       if (typeof server[1] === 'object') {
-  //         server = [
-  //           server[0],
-  //           defaults(server[1], DEFAULT_REDIS_OPTS)
-  //         ].concat(server.slice(2))
-  //       } else if (typeof server[0] === 'object') {
-  //         server = [
-  //           defaults(server[0], DEFAULT_REDIS_OPTS)
-  //         ].concat(server.slice(1))
-  //       } else {
-  //         server = server.concat([DEFAULT_REDIS_OPTS])
-  //       }
-  //
-  //       return redis.createClient.apply(redis, server)
-  //     })
-  //     redlock = new Redlock(clients, opts)
-  //     if (seperateCacheServer) {
-  //       cacheClient = clients.pop()
-  //     } else {
-  //       cacheClient = clients[0]
-  //     }
-  //   }
-  //
-  //   this._cacheClient = cacheClient
-  //   this._redlock = redlock
-  // }
-
   wrap (name, ttl, work) {
-    if (typeof ttl === 'function') {
+    if (typeof work === 'undefined') {
       work = ttl
       ttl = undefined;
       if (typeof name !== 'string') {
+        ttl = name;
         name = work.displayName || work.name
       }
     }
+
+    console.debug('wrap', name)
 
     if (!name) {
       // a man needs a name
@@ -250,10 +245,10 @@ class LockAndCache {
     }
 
     assert.equal(typeof name, 'string', 'name should be string')
-    if (typeof ttl !== 'undefined') console.warn('ttl is ignored')
     assert.equal(typeof work, 'function', 'work should be function')
 
     var wrappedFn = () => {
+      console.debug('call wrapped', name)
       var args = Array.prototype.slice.call(arguments)
       var key = [name].concat(args)
       return this.get(key, ttl, function doWork () {
@@ -282,10 +277,15 @@ class LockAndCache {
     }
   }
 
-  async get (key, ttl, work) {
+  async _get (key, ttl, work) {
     let value, extendTimeoutHandle
 
     key = JSON.stringify(key)
+
+    console.debug("get", key);
+
+    if (this.finalized)
+      throw new FinalizedError()
 
     if (typeof work === 'undefined') {
       work = ttl
@@ -296,10 +296,11 @@ class LockAndCache {
       return await this._redisGet(key)
     }
     catch (err) {
-      if (typeof err !== 'KeyNotFoundError') throw err
+      if (!(err instanceof KeyNotFoundError)) throw err
     }
 
-    const lock = await redlock.lock('lock:' + key, LOCK_TIMEOUT)
+    const lock = await this._redlock.lock('lock:' + key, LOCK_TIMEOUT)
+    console.debug("locked", key)
 
     try {
       let extend = () => {
@@ -311,7 +312,7 @@ class LockAndCache {
         return await this._redisGet(key)
       }
       catch (err) {
-        if (typeof err !== 'KeyNotFoundError') throw err
+        if (!(err instanceof KeyNotFoundError)) throw err
       }
       try {
         value = await work()
