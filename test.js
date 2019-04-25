@@ -1,6 +1,104 @@
 import test from 'tape-promise/tape'
 import cache from './'
 
+// things to test
+// top level funcs
+// cold cache
+//  returns val
+//  calls work
+// warm cache
+//  returns val
+//  does not call work
+// wrap method
+//  returns wrapper function
+// wrapper function
+//  calls cache get
+//  cold cache
+//    returns val
+//    calls wrapped function w args
+//  warm cache
+//    returns val
+//    does not call wrapped func
+// LockAndCache class
+//  constructor
+//   works w various opts permutations
+//   set things correctly internally
+//  pure function methods should be easy
+
+
+test('closing', async function (t) {
+  let closeCallCount = 0;
+  let cbCallCount = 0;
+  let obj = { close() {
+    closeCallCount++
+  } }
+  let cb = ()=>{
+    cbCallCount++
+  }
+  cache.closing(obj, cb)
+  t.equal(1, closeCallCount, '1 === closeCallCount')
+  t.equal(1, cbCallCount, '1 === cbCallCount')
+})
+
+
+class RefCounterFixture {
+  constructor() {
+    this.cbCallCount = 0
+    this.cleanupCallCount = 0;
+    this.refcounter = new cache.RefCounter(
+      this.cb.bind(this),
+      this.cleanup.bind(this),
+      0
+    )
+  }
+  cb() {
+    this.cbCallCount++
+  }
+  cleanup() {
+    this.cleanupCallCount++
+  }
+}
+
+class CalledRefCounterFixture extends RefCounterFixture {
+  constructor() {
+    super()
+    this.refcounter()
+  }
+}
+
+test('RefCounter constructor', async function (t) {
+  t.equal('function', typeof new cache.RefCounter())
+})
+
+test('RefCounter constructor does not call cb', async function (t) {
+  t.equal(0, new RefCounterFixture().cbCallCount)
+})
+
+test('RefCounter constructor does not call cleanup', async function (t) {
+  t.equal(0, new RefCounterFixture().cleanupCallCount)
+})
+
+test('RefCounter when called calls cb', async function (t) {
+  t.equal(1, new CalledRefCounterFixture().cbCallCount)
+})
+
+test('RefCounter when called does not call cleanup before timeout', async function (t) {
+  t.equal(0, new CalledRefCounterFixture().cleanupCallCount)
+})
+
+test('RefCounter when called calls cleanup after timeout', async function (t) {
+  let f = new CalledRefCounterFixture()
+  return new Promise(resolve=>{
+    setTimeout(()=>{
+      t.equal(1, f.cleanupCallCount)
+      resolve()
+    }, 10)
+  })
+})
+
+
+
+
 let executionCount = 0
 async function double (a) {
   executionCount++

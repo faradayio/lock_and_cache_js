@@ -58,11 +58,6 @@ const DEFAULT_REDIS_CACHE_OPTS = {
 }
 
 
-function defaults (opts, defs) {
-  return Object.assign({}, opts, defs);
-}
-
-
 /**
  * runs cb() then calls obj.close()
  *
@@ -247,14 +242,13 @@ class LockAndCache {
     assert.equal(typeof name, 'string', 'name should be string')
     assert.equal(typeof work, 'function', 'work should be function')
 
-    var wrappedFn = () => {
+    var wrappedFn = async function (...args) {
       console.debug('call wrapped', name)
-      var args = Array.prototype.slice.call(arguments)
       var key = [name].concat(args)
-      return this.get(key, ttl, function doWork () {
-        return Promise.resolve(work.apply(null, args))
+      return await this.get(key, ttl, async function doWork () {
+        return work.apply(null, args)
       })
-    }
+    }.bind(this)
     wrappedFn.displayName = name
 
     return wrappedFn
@@ -344,6 +338,7 @@ const default_cache = new LockAndCache()
 module.exports = default_cache.get
 module.exports.wrap = default_cache.wrap.bind(default_cache)
 module.exports.LockAndCache = LockAndCache
+module.exports.RefCounter = RefCounter
 module.exports.tieredCache = tieredCache
 module.exports.closing = closing
 module.exports.DEFAULT_MEM_CACHE_OPTS = DEFAULT_MEM_CACHE_OPTS
