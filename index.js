@@ -339,7 +339,7 @@ class LockAndCache {
       console.debug('call wrapped', name, ...args)
       var key = [name].concat(args)
       return await this.get(key, ttl, async function doWork () {
-        return work.apply(null, args)
+        return await work(...args)
       })
     }.bind(this)
     wrappedFn.displayName = name
