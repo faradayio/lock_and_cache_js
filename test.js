@@ -1,29 +1,9 @@
 import test from 'tape-promise/tape'
 import cache from './'
 
-// things to test
-// top level funcs
-// cold cache
-//  returns val
-//  calls work
-// warm cache
-//  returns val
-//  does not call work
-// wrap method
-//  returns wrapper function
-// wrapper function
-//  calls cache get
-//  cold cache
-//    returns val
-//    calls wrapped function w args
-//  warm cache
-//    returns val
-//    does not call wrapped func
-// LockAndCache class
-//  constructor
-//   works w various opts permutations
-//   set things correctly internally
-//  pure function methods should be easy
+test.onFailure(()=>{
+  process.exit(1);
+})
 
 
 test('closing', async function (t) {
@@ -61,7 +41,7 @@ class RefCounterFixture {
 
 class CalledRefCounterFixture extends RefCounterFixture {
   constructor() {
-    super()
+    super();
     this.refcounter()
   }
 }
@@ -96,7 +76,71 @@ test('RefCounter when called calls cleanup after timeout', async function (t) {
   })
 })
 
+test('tieredCache', async function (t) {
+  let c = cache.tieredCache({test}, {test})
+  t.equal(true, Array.isArray(c))
+})
 
+// things to test
+// top level funcs
+// cold cache
+//  returns val
+//  calls work
+// warm cache
+//  returns val
+//  does not call work
+// wrap method
+//  returns wrapper function
+// wrapper function
+//  calls cache get
+//  cold cache
+//    returns val
+//    calls wrapped function w args
+//  warm cache
+//    returns val
+//    does not call wrapped func
+// LockAndCache class
+//  constructor
+//   works w various opts permutations
+//   set things correctly internally
+//  pure function methods should be easy
+
+const KEY = 'test:test_key'
+
+class CacheFixture {
+  constructor() {
+    this.cache = new cache.LockAndCache()
+    this.workCallCount = 0
+  }
+  work() {
+    console.debug("WORK")
+    this.workCallCount++
+    return 'value'
+  }
+  async warmed() {
+    let work = this.work.bind(this)
+    await this.cache.del(KEY);
+    await this.cache.get(KEY, work)
+    await this.cache.get(KEY, work)
+    console.debug("warmed cache")
+    return this
+  }
+  close() {this.cache.close()}
+}
+
+test('LockAndCache', async function (t) {
+  cache.closing(await new CacheFixture().warmed(), f=>{
+    console.debug('ack')
+    t.equal(f.workCallCount, 1)
+  })
+})
+
+// class WarmCacheFixture extends CacheFixture {
+// }
+//
+// class WrappedFixture extends CacheFixture {}
+//
+// class WarmWrappedFixture extends WarmWrappedFixture {}
 
 
 let executionCount = 0

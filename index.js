@@ -74,6 +74,8 @@ function closing (obj, cb) {
 }
 
 
+const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+
 class RefCounter extends Function {
   // thanks to https://stackoverflow.com/a/40878674
   constructor (cb, cleanup, timeout) {
@@ -88,10 +90,12 @@ class RefCounter extends Function {
     return that
   }
 
-  __call__ (...opts) {
+  async __call__ (...opts) {
+    console.debug('RefCounter called')
     this._ref()
     try {
-      this._cb(...opts)
+      console.debug('calling cb')
+      return await this._cb(...opts)
     }
     finally {
       this._unref()
@@ -185,7 +189,7 @@ class LockAndCache {
     console.debug("New cache", opts)
   }
 
-  _redisGetTransform (value) {
+  _cacheGetTransform (value) {
     if (value === 'undefined') return undefined
     try {
       return JSON.parse(value)
@@ -196,22 +200,22 @@ class LockAndCache {
     }
   }
 
-  async _redisGet (key) {
+  async _cacheGet (key) {
     let value = await this._cache.get(key)
     if (value === null || typeof value === 'undefined')
       throw new KeyNotFoundError(key)
-    value = this._redisGetTransform(value);
+    value = this._cacheGetTransform(value);
     console.debug('got', value, 'for', key)
     return value;
   }
 
-  _redisSetTransform (value) {
+  _cacheSetTransform (value) {
     if (typeof value === 'undefined') return 'undefined'
     return JSON.stringify(value)
   }
 
-  async _redisSet (key, value, ttl) {
-      let v = await this._cache.set(key, this._redisSetTransform(value), {ttl})
+  async _cacheSet (key, value, ttl) {
+      let v = await this._cache.set(key, this._cacheSetTransform(value), {ttl})
       console.debug('set', value, 'for', key)
       return v
   }
@@ -222,36 +226,8 @@ class LockAndCache {
     this.finalized = true;
   }
 
-  wrap (name, ttl, work) {
-    if (typeof work === 'undefined') {
-      work = ttl
-      ttl = undefined;
-      if (typeof name !== 'string') {
-        ttl = name;
-        name = work.displayName || work.name
-      }
-    }
-
-    console.debug('wrap', name)
-
-    if (!name) {
-      // a man needs a name
-      throw new Error('cannot do lockAndCache.wrap(work) on an anonymous function')
-    }
-
-    assert.equal(typeof name, 'string', 'name should be string')
-    assert.equal(typeof work, 'function', 'work should be function')
-
-    var wrappedFn = async function (...args) {
-      console.debug('call wrapped', name)
-      var key = [name].concat(args)
-      return await this.get(key, ttl, async function doWork () {
-        return work.apply(null, args)
-      })
-    }.bind(this)
-    wrappedFn.displayName = name
-
-    return wrappedFn
+  del(...opts) {
+    return this._cache.del(...opts)
   }
 
   _errorFactory (err) {
@@ -287,7 +263,7 @@ class LockAndCache {
     }
 
     try {
-      return await this._redisGet(key)
+      return await this._cacheGet(key)
     }
     catch (err) {
       if (!(err instanceof KeyNotFoundError)) throw err
@@ -303,19 +279,20 @@ class LockAndCache {
       }
       extend()
       try {
-        return await this._redisGet(key)
+        return await this._cacheGet(key)
       }
       catch (err) {
         if (!(err instanceof KeyNotFoundError)) throw err
       }
       try {
+        console.debug('calling work to compute value')
         value = await work()
       }
       catch (err) {
         ttl = ERROR_TTL
         value = this._errorFactory(err)
       }
-      this._redisSet(key, value, ttl)
+      this._cacheSet(key, value, ttl)
     }
     finally {
       clearTimeout(extendTimeoutHandle)
@@ -331,6 +308,39 @@ class LockAndCache {
       }
     }
   }
+
+  wrap (name, ttl, work) {
+    if (typeof work === 'undefined') {
+      work = ttl
+      ttl = undefined;
+      if (typeof name !== 'string') {
+        ttl = name;
+        name = work.displayName || work.name
+      }
+    }
+
+    console.debug('wrap', name)
+
+    if (!name) {
+      // a man needs a name
+      throw new Error('cannot do lockAndCache.wrap(work) on an anonymous function')
+    }
+
+    assert.equal(typeof name, 'string', 'name should be string')
+    assert.equal(typeof work, 'function', 'work should be function')
+
+    var wrappedFn = async function (...args) {
+      console.debug('call wrapped', name)
+      var key = [name].concat(args)
+      return await this.get(key, ttl, async function doWork () {
+        return work.apply(null, args)
+      })
+    }.bind(this)
+    wrappedFn.displayName = name
+
+    return wrappedFn
+  }
+
 }
 
 const default_cache = new LockAndCache()
