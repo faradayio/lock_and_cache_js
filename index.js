@@ -318,13 +318,10 @@ class LockAndCache {
 
     console.debug('wrap', name)
 
-    if (!name) {
-      // a man needs a name
-      throw new Error('cannot do lockAndCache.wrap(work) on an anonymous function')
-    }
+    if (!name) { throw new TypeError('lockAndCache.wrap(work) requires named function') }
 
-    if (typeof name !== 'string') throw new Error('name must be a string')
-    if (typeof work !== 'function') throw new Error('work must be function')
+    if (typeof name !== 'string') throw new TypeError('name must be a string')
+    if (typeof work !== 'function') throw new TypeError('work must be a function')
 
     var wrappedFn = async function (...args) {
       console.debug('call wrapped', name, ...args)
