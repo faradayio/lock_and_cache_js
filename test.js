@@ -1,10 +1,11 @@
 import test from 'tape-promise/tape'
+import redis from "redis"
+
 import cache from './'
 
 test.onFailure(()=>{
   process.exit(1);
 })
-
 
 test('closing', async function (t) {
   let closeCallCount = 0;
@@ -31,18 +32,20 @@ class RefCounterFixture {
       0
     )
   }
-  cb() {
-    this.cbCallCount++
+  async cb() {
+    await new Promise(resolve=>setTimeout(resolve, 100))
+    ++this.cbCallCount
   }
   cleanup() {
-    this.cleanupCallCount++
+    ++this.cleanupCallCount
   }
-}
-
-class CalledRefCounterFixture extends RefCounterFixture {
-  constructor() {
-    super();
-    this.refcounter()
+  call() {
+    this.rval = this.refcounter()
+    return this
+  }
+  async asyncCall() {
+    this.rval = await this.refcounter()
+    return this
   }
 }
 
@@ -59,20 +62,23 @@ test('RefCounter constructor does not call cleanup', async function (t) {
 })
 
 test('RefCounter when called calls cb', async function (t) {
-  t.equal(1, new CalledRefCounterFixture().cbCallCount)
+  t.equal(1, (await new RefCounterFixture().asyncCall()).cbCallCount)
 })
 
 test('RefCounter when called does not call cleanup before timeout', async function (t) {
-  t.equal(0, new CalledRefCounterFixture().cleanupCallCount)
+  const f = new RefCounterFixture().call()
+  await new Promise(resolve=>setTimeout(resolve, 1))
+  t.equal(0, f.cleanupCallCount)
 })
 
 test('RefCounter when called calls cleanup after timeout', async function (t) {
-  let f = new CalledRefCounterFixture()
+  let f = new RefCounterFixture()
+  await f.call().rval
   return new Promise(resolve=>{
     setTimeout(()=>{
       t.equal(1, f.cleanupCallCount)
       resolve()
-    }, 10)
+    }, 200)
   })
 })
 
@@ -109,6 +115,9 @@ const KEY = 'test:test_key'
 
 class CacheFixture {
   constructor() {
+    const client = redis.createClient();
+    client.flushall()
+    client.quit()
     this.cache = new cache.LockAndCache()
     this.workCallCount = 0
   }
@@ -117,21 +126,29 @@ class CacheFixture {
     this.workCallCount++
     return 'value'
   }
+  async get() {
+
+    return this
+  }
   async warmed() {
     let work = this.work.bind(this)
-    await this.cache.del(KEY);
-    await this.cache.get(KEY, work)
-    await this.cache.get(KEY, work)
+    await this.cache.get(KEY, 1, work)
+    this.value = await this.cache.get(KEY, 1, work)
     console.debug("warmed cache")
     return this
   }
   close() {this.cache.close()}
 }
 
-test('LockAndCache', async function (t) {
+test('LockAndCache work called', async function (t) {
   cache.closing(await new CacheFixture().warmed(), f=>{
-    console.debug('ack')
     t.equal(f.workCallCount, 1)
+  })
+})
+
+test('LockAndCache value', async function (t) {
+  cache.closing(await new CacheFixture().warmed(), f=>{
+    t.equal(f.value, 'value')
   })
 })
 

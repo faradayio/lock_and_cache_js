@@ -226,8 +226,8 @@ class LockAndCache {
     this.finalized = true;
   }
 
-  del(...opts) {
-    return this._cache.del(...opts)
+  async del(...opts) {
+    return await this._cache.del(...opts)
   }
 
   _errorFactory (err) {
