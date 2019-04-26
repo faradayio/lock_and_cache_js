@@ -82,11 +82,6 @@ test('RefCounter when called calls cleanup after timeout', async function (t) {
   })
 })
 
-test('tieredCache', async function (t) {
-  let c = cache.tieredCache({test}, {test})
-  t.equal(true, Array.isArray(c))
-})
-
 // things to test
 // top level funcs
 // cold cache
@@ -121,13 +116,12 @@ class CacheFixture {
     this.cache = new cache.LockAndCache()
     this.workCallCount = 0
   }
-  work() {
+  async work() {
     console.debug("WORK")
     this.workCallCount++
     return 'value'
   }
   async get() {
-
     return this
   }
   async warmed() {
@@ -140,56 +134,62 @@ class CacheFixture {
   close() {this.cache.close()}
 }
 
-test('LockAndCache work called', async function (t) {
-  cache.closing(await new CacheFixture().warmed(), f=>{
-    t.equal(f.workCallCount, 1)
-  })
-})
-
-test('LockAndCache value', async function (t) {
-  cache.closing(await new CacheFixture().warmed(), f=>{
-    t.equal(f.value, 'value')
-  })
-})
-
 test('LockAndCache cache get transform undefined', async function (t) {
-  cache.closing(new CacheFixture(), f=>{
+  await cache.closing(new CacheFixture(), async function(f) {
     t.equal(typeof f.cache._cacheGetTransform('undefined'), 'undefined')
   })
 })
 
 test('LockAndCache cache get transform json', async function (t) {
-  cache.closing(new CacheFixture(), f=>{
+  await cache.closing(new CacheFixture(), async function(f) {
     t.deepEqual(f.cache._cacheGetTransform('{"foo": "bar"}'), {foo: "bar"})
   })
 })
 
+test('_cacheSetTransform undefined', async function (t) {
+  await cache.closing(new CacheFixture(), async function(f) {
+    t.equal(f.cache._cacheSetTransform(undefined), 'undefined')
+  })
+})
+
+test('_cacheSetTransform object', async function (t) {
+  const OBJ = {foo: 'bar'}
+  await cache.closing(new CacheFixture(), async function(f) {
+    t.deepEqual(f.cache._cacheSetTransform(OBJ), JSON.stringify(OBJ))
+  })
+})
+
 test('_cacheGet throws KeyNotFound when key not found', async function(t) {
-  cache.closing(new CacheFixture(), async function(f) {
-    t.rejects(
+  await cache.closing(new CacheFixture(), async function(f) {
+    await t.rejects(
       f.cache._cacheGet('key that does not exist'),
       cache.KeyNotFoundError
     )
   })
 })
 
-test('_cacheGet does not throw KeyNotFound when key not found', async function(t) {
-  cache.closing(new CacheFixture(), async function(f) {
-    t.doesNotReject(f.cache._cacheGet('test:test_key'))
+test('_cacheGet does not throw when key found', async function(t) {
+  await cache.closing(await new CacheFixture().warmed(), async function(f) {
+    await f.cache._cacheGet(KEY)
   })
 })
 
-// class WarmCacheFixture extends CacheFixture {
-// }
-//
-// class WrappedFixture extends CacheFixture {}
-//
-// class WarmWrappedFixture extends WarmWrappedFixture {}
+test('LockAndCache work called', async function (t) {
+  await cache.closing(await new CacheFixture().warmed(), async function(f) {
+    t.equal(f.workCallCount, 1)
+  })
+})
+
+test('LockAndCache value', async function (t) {
+  await cache.closing(await new CacheFixture().warmed(), async function(f) {
+    t.equal(f.value, 'value')
+  })
+})
 
 
 let executionCount = 0
 async function double (a) {
-  executionCount++
+  console.debug('excount', ++executionCount, a)
   return a * 2
 }
 
@@ -203,8 +203,10 @@ async function undef () {
 
 const cachedUndefined = cache.wrap(1, undef)
 
-function cachedStandaloneDouble (a) {
-  return cache(['standaloneDouble', a], 1, async function () {
+async function cachedStandaloneDouble (a) {
+  console.debug('cachedStandaloneDouble', a)
+  return await cache(['standaloneDouble', a], 1, async function () {
+    console.debug('cachedStandaloneDouble work', a)
     executionCount++
     return a * 2
   })
@@ -224,16 +226,16 @@ test('basic', async function (t) {
 })
 
 test('parallel', async function (t) {
-  console.debug('parallel test')
   executionCount = 0
-  let results = await Promise.all([1, 4, 3, 3, 4, 1].map(cachedDouble))
+  let results = await Promise.all([1, 4, 3, 3, 4, 1].map(i=>cachedDouble(i)))
   t.deepEqual(results, [2, 8, 6, 6, 8, 2])
   t.equal(executionCount, 3)
 })
 
 test('standalone', async function (t) {
   executionCount = 0
-  let results = await Promise.all([1, 4, 3, 3, 4, 1].map(cachedStandaloneDouble))
+  let results = await Promise.all([1, 4, 3, 3, 4, 1].map(i=>cachedStandaloneDouble(i)))
+  console.debug('standalone got results')
   t.deepEqual(results, [2, 8, 6, 6, 8, 2])
   t.equal(executionCount, 3)
 })

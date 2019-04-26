@@ -21,7 +21,7 @@ var redisStore = require('cache-manager-redis-store');
 
 const LOCK_TIMEOUT = 5000
 const LOCK_EXTEND_TIMEOUT = 2500
-const REDIS_CONN_IDLE_TIMEOUT = process.env.NODE_ENV === 'test' ? 2000 : 30000
+const REDIS_CONN_IDLE_TIMEOUT = process.env.NODE_ENV === 'test' ? 1000 : 30000
 
 const ERROR_TTL = 1
 
@@ -66,7 +66,7 @@ const DEFAULT_REDIS_CACHE_OPTS = {
  */
 async function closing (obj, cb) {
   try {
-    await cb(obj)
+    return await cb(obj)
   }
   finally {
     obj.close()
@@ -103,7 +103,6 @@ class RefCounter extends Function {
   }
 
   _ref () {
-    console.debug('clear cleanup timeout')
     clearTimeout(this._timeoutHandle)
     this._timeoutHandle = null
     this._refs++
@@ -200,10 +199,16 @@ class LockAndCache {
     }
   }
 
+  stringifyKey(key) {
+    return typeof key === 'string' ? key : JSON.stringify(key)
+  }
+
   async _cacheGet (key) {
+    key = this.stringifyKey(key)
     let value = await this._cache.get(key)
-    if (value === null || typeof value === 'undefined')
+    if (value === null || typeof value === 'undefined') {
       throw new KeyNotFoundError(key)
+    }
     value = this._cacheGetTransform(value);
     console.debug('got', value, 'for', key)
     return value;
@@ -215,14 +220,15 @@ class LockAndCache {
   }
 
   async _cacheSet (key, value, ttl) {
-      let v = await this._cache.set(key, this._cacheSetTransform(value), {ttl})
-      console.debug('set', value, 'for', key)
-      return v
+    key = this.stringifyKey(key)
+    let v = await this._cache.set(key, this._cacheSetTransform(value), {ttl})
+    console.debug('set', value, 'for', key)
+    return v
   }
 
   close() {
-    console.debug("closing connections");
-    [...this._lockClients, ...this._cacheClients].forEach((c) => c.quit())
+    console.debug("closing connections", [...this._lockClients, ...this._cacheClients].length);
+    [...this._lockClients, ...this._cacheClients].forEach(c => c.quit())
     this.finalized = true;
   }
 
@@ -249,8 +255,7 @@ class LockAndCache {
 
   async _get (key, ttl, work) {
     let value, extendTimeoutHandle
-
-    key = JSON.stringify(key)
+    key = this.stringifyKey(key)
 
     console.debug("get", key);
 
@@ -292,7 +297,8 @@ class LockAndCache {
         ttl = ERROR_TTL
         value = this._errorFactory(err)
       }
-      this._cacheSet(key, value, ttl)
+      await this._cacheSet(key, value, ttl)
+      return value
     }
     finally {
       clearTimeout(extendTimeoutHandle)
@@ -330,7 +336,7 @@ class LockAndCache {
     assert.equal(typeof work, 'function', 'work should be function')
 
     var wrappedFn = async function (...args) {
-      console.debug('call wrapped', name)
+      console.debug('call wrapped', name, ...args)
       var key = [name].concat(args)
       return await this.get(key, ttl, async function doWork () {
         return work.apply(null, args)
@@ -345,7 +351,8 @@ class LockAndCache {
 
 const default_cache = new LockAndCache()
 
-module.exports = default_cache.get
+module.exports = default_cache.get.bind(default_cache)
+module.exports.close = default_cache.close.bind(default_cache)
 module.exports.wrap = default_cache.wrap.bind(default_cache)
 module.exports.LockAndCache = LockAndCache
 module.exports.RefCounter = RefCounter
