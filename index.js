@@ -64,9 +64,9 @@ const DEFAULT_REDIS_CACHE_OPTS = {
  * @example
  * closing(LockAndCache(), cache => console.log(cache.get('key', (val)=>{...})))
  */
-function closing (obj, cb) {
+async function closing (obj, cb) {
   try {
-    cb(obj)
+    await cb(obj)
   }
   finally {
     obj.close()

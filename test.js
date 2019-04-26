@@ -13,10 +13,10 @@ test('closing', async function (t) {
   let obj = { close() {
     closeCallCount++
   } }
-  let cb = ()=>{
+  let cb = async function () {
     cbCallCount++
   }
-  cache.closing(obj, cb)
+  await cache.closing(obj, cb)
   t.equal(1, closeCallCount, '1 === closeCallCount')
   t.equal(1, cbCallCount, '1 === cbCallCount')
 })
@@ -149,6 +149,33 @@ test('LockAndCache work called', async function (t) {
 test('LockAndCache value', async function (t) {
   cache.closing(await new CacheFixture().warmed(), f=>{
     t.equal(f.value, 'value')
+  })
+})
+
+test('LockAndCache cache get transform undefined', async function (t) {
+  cache.closing(new CacheFixture(), f=>{
+    t.equal(typeof f.cache._cacheGetTransform('undefined'), 'undefined')
+  })
+})
+
+test('LockAndCache cache get transform json', async function (t) {
+  cache.closing(new CacheFixture(), f=>{
+    t.deepEqual(f.cache._cacheGetTransform('{"foo": "bar"}'), {foo: "bar"})
+  })
+})
+
+test('_cacheGet throws KeyNotFound when key not found', async function(t) {
+  cache.closing(new CacheFixture(), async function(f) {
+    t.rejects(
+      f.cache._cacheGet('key that does not exist'),
+      cache.KeyNotFoundError
+    )
+  })
+})
+
+test('_cacheGet does not throw KeyNotFound when key not found', async function(t) {
+  cache.closing(new CacheFixture(), async function(f) {
+    t.doesNotReject(f.cache._cacheGet('test:test_key'))
   })
 })
 
