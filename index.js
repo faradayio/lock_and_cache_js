@@ -9,8 +9,9 @@
  * @example
  * const lock_and_cache = require('lock_and_cache')
  * let cache = lock_and_cache.LockAndCache()
- * let square = cache.wrap(x=>x*x)
- * let foo = cache.get('foo', ()=>'bar')
+ * let square = cache.wrap(async function foofunc (x) {return x*x})
+ * const customCache = lock_and_cache.LockAndCache({opts})
+ * let foo = customCache.get('foo', ()=>'bar')
  */
 
 var redis = require('redis')
@@ -59,7 +60,7 @@ const DEFAULT_REDIS_CACHE_OPTS = {
  * runs cb() then calls obj.close()
  *
  * @example
- * closing(LockAndCache(), cache => console.log(cache.get('key', (val)=>{...})))
+ * closing(LockAndCache(), cache => console.log(cache.get('key', ()=>{return 'value'})))
  */
 async function closing (obj, cb) {
   try {
@@ -69,6 +70,10 @@ async function closing (obj, cb) {
   }
 }
 
+/**
+ * Count references to a resources and call a cleanup function after refs drop
+ * to zero and a timeout expires.
+ */
 class RefCounter extends Function {
   // thanks to https://stackoverflow.com/a/40878674
   constructor (cb, cleanup, timeout) {
@@ -152,10 +157,14 @@ class FinalizedError extends Error {}
  * @example
  * LockAndCache(opts)
  * @example
- * LockAndCache({cache, lockServers, driftFactor, retryCount, retryDelay})
+ * LockAndCache({caches, lockClients, lockOpts})
  * @example
  * const cache = LockAndCache()
- * try { ... } finally { cache.close() }
+ * try {
+ *   const val = cache.get('key', async function () { return 'value' })
+ * } finally {
+ *   cache.close()
+ * }
  */
 class LockAndCache {
   constructor (opts) {
@@ -188,12 +197,12 @@ class LockAndCache {
     }
   }
 
-  stringifyKey (key) {
+  _stringifyKey (key) {
     return typeof key === 'string' ? key : JSON.stringify(key)
   }
 
   async _cacheGet (key) {
-    key = this.stringifyKey(key)
+    key = this._stringifyKey(key)
     let value = await this._cache.get(key)
     if (value === null || typeof value === 'undefined') {
       throw new KeyNotFoundError(key)
@@ -209,7 +218,7 @@ class LockAndCache {
   }
 
   async _cacheSet (key, value, ttl) {
-    key = this.stringifyKey(key)
+    key = this._stringifyKey(key)
     let v = await this._cache.set(key, this._cacheSetTransform(value), {
       ttl
     })
@@ -246,7 +255,7 @@ class LockAndCache {
 
   async _get (key, ttl, work) {
     let value, extendTimeoutHandle
-    key = this.stringifyKey(key)
+    key = this._stringifyKey(key)
 
     console.debug('get', key)
 
@@ -306,14 +315,27 @@ class LockAndCache {
     }
   }
 
-  wrap (name, ttl, work) {
-    if (typeof work === 'undefined') {
-      work = ttl
-      ttl = undefined
-      if (typeof name !== 'string') {
-        ttl = name
-        name = work.displayName || work.name
-      }
+  /**
+   * wraps a function in a locking cache
+   * @param  {string|number|function} name if 3 params, ttl if 2 params, work if 1 param
+   * @param  {number|function} ttl  if 3 params, work if 2 params
+   * @param  {function} work if 3 params
+   * @return {function}      wrapped function
+   */
+  wrap (...opts) {
+    let name, ttl, work
+    if (opts.length === 3) {
+      [name, ttl, work] = opts
+    } else if (opts.length === 2) {
+      [ttl, work] = opts
+    } else if (opts.length === 1) {
+      [work] = opts
+    } else {
+      throw new TypeError('wrap requires 1, 2, or 3 arguments')
+    }
+
+    if (typeof name !== 'string') {
+      name = work.displayName || work.name
     }
 
     console.debug('wrap', name)

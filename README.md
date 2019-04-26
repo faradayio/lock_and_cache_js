@@ -23,6 +23,18 @@ const getStockQuote = cache.wrap(60, async function stock (symbol) {
   // calling this multiple times in parallel will only run it once
   // the cache key is based on the function name and arguments
 })
+
+// custom options w immediate closing
+// options are passed thru to cache manager which passes thru to backends
+const customCache = cache.LockAndCache({
+  caches: cache.tieredCache({...memOpts}, {...redisOpts})
+})
+closing(customCache, async function (cache) {
+  const value = cache.get(...)
+  const wrapped = cache.wrap(...)
+  cache.del(key)
+  ...
+})
 ```
 
 ## Install
