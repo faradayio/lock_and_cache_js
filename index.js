@@ -318,7 +318,9 @@ class LockAndCache {
 
     console.debug('wrap', name)
 
-    if (!name) { throw new TypeError('lockAndCache.wrap(work) requires named function') }
+    if (!name) {
+      throw new TypeError('lockAndCache.wrap(work) requires named function')
+    }
 
     if (typeof name !== 'string') throw new TypeError('name must be a string')
     if (typeof work !== 'function') throw new TypeError('work must be a function')
