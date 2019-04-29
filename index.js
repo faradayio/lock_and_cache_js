@@ -147,7 +147,6 @@ function tieredCache (memOpts, redisOpts) {
 }
 
 class KeyNotFoundError extends Error {}
-class FinalizedError extends Error {}
 
 /**
  * LockAndCache
@@ -183,7 +182,6 @@ class LockAndCache {
     // this.get = this._get
     this.get = new RefCounter(this._get.bind(this), this.close.bind(this), REDIS_CONN_IDLE_TIMEOUT)
     console.debug('conn timeout', REDIS_CONN_IDLE_TIMEOUT)
-    this.finalized = false
     console.debug('New cache', opts)
   }
 
@@ -229,7 +227,6 @@ class LockAndCache {
   close () {
     console.debug('closing connections', [...this._lockClients, ...this._cacheClients].length);
     [...this._lockClients, ...this._cacheClients].forEach(c => c.quit())
-    this.finalized = true
   }
 
   del (...opts) {
@@ -258,10 +255,6 @@ class LockAndCache {
     key = this._stringifyKey(key)
 
     console.debug('get', key)
-
-    if (this.finalized) {
-      throw new FinalizedError()
-    }
 
     if (typeof work === 'undefined') {
       work = ttl
