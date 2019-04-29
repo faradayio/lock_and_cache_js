@@ -19,9 +19,27 @@ var Redlock = require('redlock')
 var cacheManager = require('cache-manager')
 var redisStore = require('cache-manager-redis-store')
 
+import { inspect } from 'util'
+
+export default function log (...message) {
+  if (process.env.NODE_ENV === 'test' && !process.env.DEBUG) return
+  message = [new Date(), ...message]
+  console.log(...message.map((m) => {
+    if (typeof m === 'string') return m
+    if (m instanceof Error) return m.stack
+    if (m instanceof Date) return m.toLocaleString()
+    return inspect(m, { colors: Boolean(process.stdout.isTTY) })
+  }))
+}
+
+log.debug = function logDebug (...message) {
+  if (process.env.NODE_ENV !== 'debug') return
+  log(...message)
+}
+
 const LOCK_TIMEOUT = 5000
 const LOCK_EXTEND_TIMEOUT = 2500
-const REDIS_CONN_IDLE_TIMEOUT = process.env.NODE_ENV === 'test' ? 1000 : 30000
+const REDIS_CONN_IDLE_TIMEOUT = ['test', 'debug'].includes(process.env.NODE_ENV) ? 500 : 30000
 
 const ERROR_TTL = 1
 
@@ -84,15 +102,15 @@ class RefCounter extends Function {
     this._timeout = timeout
     this._refs = 0
     this._timeoutHandle = null
-    console.debug('refcounter timeout', timeout)
+    log.debug('refcounter timeout', timeout)
     return that
   }
 
   async __call__ (...opts) {
-    console.debug('RefCounter called')
+    log.debug('RefCounter called')
     this._ref()
     try {
-      console.debug('calling cb')
+      log.debug('calling cb')
       return await this._cb(...opts)
     } finally {
       this._unref()
@@ -103,16 +121,16 @@ class RefCounter extends Function {
     clearTimeout(this._timeoutHandle)
     this._timeoutHandle = null
     this._refs++
-    console.debug('refs', this._refs)
+    log.debug('refs', this._refs)
   }
 
   _unref () {
     this._refs--
-    console.debug('refs', this._refs)
+    log.debug('refs', this._refs)
     if (this._refs === 0) {
-      console.debug('set cleanup timeout')
+      log.debug('set cleanup timeout')
       this._timeoutHandle = setTimeout(() => {
-        console.debug('cleaning up')
+        log.debug('cleaning up')
         this._cleanup()
       }, this._timeout)
     }
@@ -181,8 +199,8 @@ class LockAndCache {
     this._cache = cacheManager.multiCaching(caches)
     // this.get = this._get
     this.get = new RefCounter(this._get.bind(this), this.close.bind(this), REDIS_CONN_IDLE_TIMEOUT)
-    console.debug('conn timeout', REDIS_CONN_IDLE_TIMEOUT)
-    console.debug('New cache', opts)
+    log.debug('conn timeout', REDIS_CONN_IDLE_TIMEOUT)
+    log.debug('New cache', opts)
   }
 
   _cacheGetTransform (value) {
@@ -206,7 +224,7 @@ class LockAndCache {
       throw new KeyNotFoundError(key)
     }
     value = this._cacheGetTransform(value)
-    console.debug('got', value, 'for', key)
+    log.debug('got', value, 'for', key)
     return value
   }
 
@@ -220,12 +238,12 @@ class LockAndCache {
     let v = await this._cache.set(key, this._cacheSetTransform(value), {
       ttl
     })
-    console.debug('set', value, 'for', key)
+    log.debug('set', value, 'for', key)
     return v
   }
 
   close () {
-    console.debug('closing connections', [...this._lockClients, ...this._cacheClients].length);
+    log.debug('closing connections', [...this._lockClients, ...this._cacheClients].length);
     [...this._lockClients, ...this._cacheClients].forEach(c => c.quit())
   }
 
@@ -254,7 +272,7 @@ class LockAndCache {
     let value, extendTimeoutHandle
     key = this._stringifyKey(key)
 
-    console.debug('get', key)
+    log.debug('get', key)
 
     if (typeof work === 'undefined') {
       work = ttl
@@ -268,7 +286,7 @@ class LockAndCache {
     }
 
     const lock = await this._redlock.lock('lock:' + key, LOCK_TIMEOUT)
-    console.debug('locked', key)
+    log.debug('locked', key)
 
     try {
       let extend = () => {
@@ -282,7 +300,7 @@ class LockAndCache {
         if (!(err instanceof KeyNotFoundError)) throw err
       }
       try {
-        console.debug('calling work to compute value')
+        log.debug('calling work to compute value')
         value = await work()
         return value
       } catch (err) {
@@ -331,7 +349,7 @@ class LockAndCache {
       name = work.displayName || work.name
     }
 
-    console.debug('wrap', name)
+    log.debug('wrap', name)
 
     if (!name) {
       throw new TypeError('lockAndCache.wrap(work) requires named function')
@@ -341,7 +359,7 @@ class LockAndCache {
     if (typeof work !== 'function') throw new TypeError('work must be a function')
 
     var wrappedFn = async function (...args) {
-      console.debug('call wrapped', name, ...args)
+      log.debug('call wrapped', name, ...args)
       var key = [name].concat(args)
       return this.get(key, ttl, async function doWork () {
         return work(...args)
