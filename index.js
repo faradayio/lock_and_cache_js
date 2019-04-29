@@ -21,7 +21,7 @@ const redisStore = require('cache-manager-redis-store')
 
 const inspect = require('util').inspect
 
-export default function log (...message) {
+function log (...message) {
   if (process.env.NODE_ENV === 'test' && !process.env.DEBUG) return
   message = [new Date(), ...message]
   console.log(...message.map((m) => {
