@@ -14,12 +14,12 @@
  * let foo = customCache.get('foo', ()=>'bar')
  */
 
-var redis = require('redis')
-var Redlock = require('redlock')
-var cacheManager = require('cache-manager')
-var redisStore = require('cache-manager-redis-store')
+const redis = require('redis')
+const Redlock = require('redlock')
+const cacheManager = require('cache-manager')
+const redisStore = require('cache-manager-redis-store')
 
-import { inspect } from 'util'
+const inspect = require('util').inspect
 
 export default function log (...message) {
   if (process.env.NODE_ENV === 'test' && !process.env.DEBUG) return
@@ -358,9 +358,9 @@ class LockAndCache {
     if (typeof name !== 'string') throw new TypeError('name must be a string')
     if (typeof work !== 'function') throw new TypeError('work must be a function')
 
-    var wrappedFn = async function (...args) {
+    const wrappedFn = async function (...args) {
       log.debug('call wrapped', name, ...args)
-      var key = [name].concat(args)
+      const key = [name].concat(args)
       return this.get(key, ttl, async function doWork () {
         return work(...args)
       })
