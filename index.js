@@ -290,7 +290,7 @@ class LockAndCache {
 
     try {
       let extend = () => {
-        lock.extend(LOCK_TIMEOUT)
+        lock.extend(LOCK_TIMEOUT).catch(err=>log("failed to extend lock", err))
         extendTimeoutHandle = setTimeout(extend, LOCK_EXTEND_TIMEOUT)
       }
       extend()
