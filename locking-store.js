@@ -1,3 +1,5 @@
+console.log('locking-store')
+
 export const LOCK_TIMEOUT = 5000
 export const LOCK_EXTEND_TIMEOUT = 2500
 export const LOCK_MAX_EXTENSIONS = 100
@@ -82,7 +84,13 @@ export class ExtendableLock {
 }
 
 export default class LockingStore {
-  constructor ({store, redlock, timeout=LOCK_TIMEOUT, extendInterval=LOCK_EXTEND_TIMEOUT}) {
+  constructor ({
+    store,
+    redlock,
+    namespace='default',
+    timeout=LOCK_TIMEOUT,
+    extendInterval=LOCK_EXTEND_TIMEOUT
+  }) {
     this.store = store
     this.redlock = redlock
     this.timeout = timeout
@@ -96,7 +104,7 @@ export default class LockingStore {
       await lock.unlocked;
     }
     lock = new ExtendableLock({redlock: this.redlock})
-    await lock.lock('lock:' + key, LOCK_TIMEOUT)
+    await lock.lock(`locking-store/${prefix}/${key}`, LOCK_TIMEOUT)
     this._locks.set(key, lock)
     return lock
   }
