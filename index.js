@@ -25,7 +25,7 @@ function log (...message) {
   if (process.env.NODE_ENV === 'test' && !process.env.DEBUG) return
   message = [new Date(), ...message]
   console.log(...message.map((m) => {
-    if (typeof m === 'string') return m
+    if (typeof m === 'string') return m.slice(0,100)
     if (m instanceof Error) return m.stack
     if (m instanceof Date) return m.toLocaleString()
     return inspect(m, { colors: Boolean(process.stdout.isTTY) })
@@ -205,12 +205,13 @@ class LockAndCache {
 
   _cacheGetTransform (value) {
     if (value === 'undefined') return undefined
-    try {
-      return JSON.parse(value)
-    } catch (err) {
-      console.error(err, value)
-      throw err
-    }
+    return value
+    // try {
+    //   return JSON.parse(value)
+    // } catch (err) {
+    //   console.error(err, value)
+    //   throw err
+    // }
   }
 
   _stringifyKey (key) {
@@ -230,7 +231,8 @@ class LockAndCache {
 
   _cacheSetTransform (value) {
     if (typeof value === 'undefined') return 'undefined'
-    return JSON.stringify(value)
+    return value
+    // return JSON.stringify(value)
   }
 
   async _cacheSet (key, value, ttl) {
