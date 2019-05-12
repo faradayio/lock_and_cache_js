@@ -1,4 +1,10 @@
-console.log('locking-store')
+/**
+ * Experimental optimistically-locking cache-manager store wrapper
+ *
+ * Completely untested; caveat emptor
+*/
+
+const inspect = require('util').inspect
 
 export const LOCK_TIMEOUT = 5000
 export const LOCK_EXTEND_TIMEOUT = 2500
@@ -25,9 +31,9 @@ export class LockMaxExtensionsReached extends Error {}
 export class ExtendableLock {
   constructor ({
     redlock,
-    autoExtend=true,
-    maxExtensions=LOCK_MAX_EXTENSIONS,
-    extendInterval=LOCK_EXTEND_TIMEOUT
+    autoExtend = true,
+    maxExtensions = LOCK_MAX_EXTENSIONS,
+    extendInterval = LOCK_EXTEND_TIMEOUT
   }) {
     this.redlock = redlock
     this.autoExtend = autoExtend
@@ -37,11 +43,10 @@ export class ExtendableLock {
     this._autoExtendTimeoutHandle = null
   }
 
-  async _autoExtendTimeout() {
+  async _autoExtendTimeout () {
     try {
       await this.extend()
-    }
-    catch (err) {
+    } catch (err) {
       if (err instanceof LockMaxExtensionsReached) {
         return
       }
@@ -53,19 +58,19 @@ export class ExtendableLock {
     )
   }
 
-  _clearTimeout() {
+  _clearTimeout () {
     clearTimeout(this._autoExtendTimeoutHandle)
   }
 
-  async lock(...opts) {
-    if(this.extensionsRemaining > 0) return;
+  async lock (...opts) {
+    if (this.extensionsRemaining > 0) return
     this.unlocked = new Promise()
-    this.extensionsRemaining = maxExtensions
+    this.extensionsRemaining = this.maxExtensions
     this.lock = await this.redlock.lock(...opts)
-    this.autoExtend && this._autoExtendTimeout();
+    this.autoExtend && this._autoExtendTimeout()
   }
 
-  unlock(...opts) {
+  unlock (...opts) {
     this._clearTimeout()
     this.extensionsRemaining = 0
     const lock = this.lock
@@ -74,8 +79,8 @@ export class ExtendableLock {
     return lock.unlock(...opts)
   }
 
-  extend(...opts) {
-    if (this.extensionsRemaining == 0) {
+  extend (...opts) {
+    if (this.extensionsRemaining === 0) {
       throw new LockMaxExtensionsReached()
     }
     this.extensionsRemaining--
@@ -87,10 +92,11 @@ export default class LockingStore {
   constructor ({
     store,
     redlock,
-    namespace='default',
-    timeout=LOCK_TIMEOUT,
-    extendInterval=LOCK_EXTEND_TIMEOUT
+    namespace = 'default',
+    timeout = LOCK_TIMEOUT,
+    extendInterval = LOCK_EXTEND_TIMEOUT
   }) {
+    this.namespace = namespace
     this.store = store
     this.redlock = redlock
     this.timeout = timeout
@@ -99,12 +105,12 @@ export default class LockingStore {
   }
 
   async lock (key) {
-    let lock = this._locks.get(key);
+    let lock = this._locks.get(key)
     if (lock) {
-      await lock.unlocked;
+      await lock.unlocked
     }
-    lock = new ExtendableLock({redlock: this.redlock})
-    await lock.lock(`locking-store/${prefix}/${key}`, LOCK_TIMEOUT)
+    lock = new ExtendableLock({ redlock: this.redlock })
+    await lock.lock(`locking-store/${this.namespace}/${key}`, LOCK_TIMEOUT)
     this._locks.set(key, lock)
     return lock
   }
@@ -118,11 +124,11 @@ export default class LockingStore {
 
   async get (key, opts, cb) {
     if (typeof opts === 'function') {
-      cb = opts;
-      opts = undefined;
+      cb = opts
+      opts = undefined
     }
-    opts = opts || {};
-    cb = cb || () => {};
+    opts = opts || {}
+    cb = cb || (() => {})
     try {
       let value = await this.store.get(key, opts)
       if (value === null) {
@@ -133,15 +139,13 @@ export default class LockingStore {
           value = await this.store.get(key, opts)
         }
         cb(null, value)
-        return value;
-      }
-      finally {
+        return value
+      } finally {
         if (value !== null) {
           this.unlock(key)
         }
       }
-    }
-    catch (err) {
+    } catch (err) {
       cb(err, null)
       throw err
     }
@@ -149,20 +153,18 @@ export default class LockingStore {
 
   async set (key, value, opts, cb) {
     if (typeof opts === 'function') {
-      cb = opts;
-      opts = undefined;
+      cb = opts
+      opts = undefined
     }
-    opts = opts || {};
-    cb = cb || () => {};
+    opts = opts || {}
+    cb = cb || (() => {})
     try {
       const v = await this.store.set(key, value, opts)
       cb(null, v)
       return v
-    }
-    catch (err) {
+    } catch (err) {
       cb(err, null)
-    }
-    finally {
+    } finally {
       this.unlock(key)
     }
   }

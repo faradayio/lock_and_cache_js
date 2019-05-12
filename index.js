@@ -25,7 +25,7 @@ function log (...message) {
   if (process.env.NODE_ENV === 'test' && !process.env.DEBUG) return
   message = [new Date(), ...message]
   console.log(...message.map((m) => {
-    if (typeof m === 'string') return m.slice(0,100)
+    if (typeof m === 'string') return m.slice(0, 100)
     if (m instanceof Error) return m.stack
     if (m instanceof Date) return m.toLocaleString()
     return inspect(m, { colors: Boolean(process.stdout.isTTY) })
@@ -292,7 +292,7 @@ class LockAndCache {
 
     try {
       let extend = () => {
-        lock.extend(LOCK_TIMEOUT).catch(err=>log("failed to extend lock", err))
+        lock.extend(LOCK_TIMEOUT).catch(err => log('failed to extend lock', err))
         extendTimeoutHandle = setTimeout(extend, LOCK_EXTEND_TIMEOUT)
       }
       extend()
