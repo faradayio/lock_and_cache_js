@@ -165,6 +165,7 @@ function tieredCache (memOpts, redisOpts) {
 }
 
 class KeyNotFoundError extends Error {}
+class NotConnectedError extends Error {}
 
 /**
  * LockAndCache
@@ -184,12 +185,14 @@ class KeyNotFoundError extends Error {}
  * }
  */
 class LockAndCache {
-  constructor (opts) {
-    const {
-      caches = tieredCache(),
-      lockClients = [redis.createClient(DEFAULT_REDIS_LOCK_OPTS)],
-      lockOpts = DEFAULT_REDLOCK_OPTS
-    } = opts || {}
+  constructor ({
+    caches = tieredCache(),
+    lockClients = [redis.createClient(DEFAULT_REDIS_LOCK_OPTS)],
+    lockOpts = DEFAULT_REDLOCK_OPTS,
+    redisIdleTimeout = false,
+    autoJson = false
+  } = {}) {
+    this._autoJson = autoJson
     this._lockClients = lockClients
     this._redlock = new Redlock(lockClients, lockOpts)
     this._cacheClients = (
@@ -197,21 +200,26 @@ class LockAndCache {
         .filter(cache => !!cache)
     )
     this._cache = cacheManager.multiCaching(caches)
-    // this.get = this._get
-    this.get = new RefCounter(this._get.bind(this), this.close.bind(this), REDIS_CONN_IDLE_TIMEOUT)
-    log.debug('conn timeout', REDIS_CONN_IDLE_TIMEOUT)
-    log.debug('New cache', opts)
+    if (redisIdleTimeout) {
+      this.get = new RefCounter(
+        this._get.bind(this), this.close.bind(this), redisIdleTimeout)
+    } else {
+      this.get = this._get
+    }
+    this.connected = true
   }
 
   _cacheGetTransform (value) {
     if (value === 'undefined') return undefined
+    if (this._autoJson) {
+      try {
+        return JSON.parse(value)
+      } catch (err) {
+        console.error(err, value)
+        throw err
+      }
+    }
     return value
-    // try {
-    //   return JSON.parse(value)
-    // } catch (err) {
-    //   console.error(err, value)
-    //   throw err
-    // }
   }
 
   _stringifyKey (key) {
@@ -231,8 +239,10 @@ class LockAndCache {
 
   _cacheSetTransform (value) {
     if (typeof value === 'undefined') return 'undefined'
+    if (this._autoJson) {
+      return JSON.stringify(value)
+    }
     return value
-    // return JSON.stringify(value)
   }
 
   async _cacheSet (key, value, ttl) {
@@ -244,12 +254,19 @@ class LockAndCache {
     return v
   }
 
+  ensureConnected () {
+    if (!this.connected) throw new NotConnectedError()
+  }
+
   close () {
-    log.debug('closing connections', [...this._lockClients, ...this._cacheClients].length);
+    this.ensureConnected()
+    log.debug('closing connections', this._lockClients.length + this._cacheClients.length)
+    this.connected = false;
     [...this._lockClients, ...this._cacheClients].forEach(c => c.quit())
   }
 
   del (...opts) {
+    this.ensureConnected()
     return this._cache.del(...opts)
   }
 
@@ -271,6 +288,7 @@ class LockAndCache {
   }
 
   async _get (key, ttl, work) {
+    this.ensureConnected()
     let value, extendTimeoutHandle
     key = this._stringifyKey(key)
 
@@ -373,11 +391,28 @@ class LockAndCache {
   }
 }
 
-const DEFAULT_CACHE = new LockAndCache()
+let _defaultCache
 
-module.exports = DEFAULT_CACHE.get.bind(DEFAULT_CACHE)
-module.exports.close = DEFAULT_CACHE.close.bind(DEFAULT_CACHE)
-module.exports.wrap = DEFAULT_CACHE.wrap.bind(DEFAULT_CACHE)
+function defaultCache () {
+  if (!_defaultCache || !_defaultCache.connected) {
+    _defaultCache = new LockAndCache({
+      redisIdleTimeout: REDIS_CONN_IDLE_TIMEOUT,
+      autoJson: true
+    })
+  }
+  return _defaultCache
+}
+
+function defaultCache_get (...opts) {
+  return defaultCache().get(...opts)
+}
+
+function defaultCache_wrap (...opts) {
+  return defaultCache().wrap(...opts)
+}
+
+module.exports = defaultCache_get
+module.exports.wrap = defaultCache_wrap
 module.exports.LockAndCache = LockAndCache
 module.exports.RefCounter = RefCounter
 module.exports.tieredCache = tieredCache
