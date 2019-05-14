@@ -202,9 +202,9 @@ class LockAndCache {
     this._cache = cacheManager.multiCaching(caches)
     if (redisIdleTimeout) {
       this.get = new RefCounter(
-        this._get.bind(this), this.close.bind(this), redisIdleTimeout)
+        this.Get.bind(this), this.close.bind(this), redisIdleTimeout)
     } else {
-      this.get = this._get
+      this.get = this.Get
     }
     this.connected = true
   }
@@ -287,7 +287,7 @@ class LockAndCache {
     }
   }
 
-  async _get (key, ttl, work) {
+  async Get (key, ttl, work) {
     this.ensureConnected()
     let value, extendTimeoutHandle
     key = this._stringifyKey(key)
@@ -403,16 +403,16 @@ function defaultCache () {
   return _defaultCache
 }
 
-function defaultCache_get (...opts) {
+function defaultCacheGet (...opts) {
   return defaultCache().get(...opts)
 }
 
-function defaultCache_wrap (...opts) {
+function defaultCacheWrap (...opts) {
   return defaultCache().wrap(...opts)
 }
 
-module.exports = defaultCache_get
-module.exports.wrap = defaultCache_wrap
+module.exports = defaultCacheGet
+module.exports.wrap = defaultCacheWrap
 module.exports.LockAndCache = LockAndCache
 module.exports.RefCounter = RefCounter
 module.exports.tieredCache = tieredCache
