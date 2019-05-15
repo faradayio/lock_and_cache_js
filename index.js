@@ -159,7 +159,7 @@ class RefCounter extends Function {
  */
 function tieredCache (memOpts, redisOpts) {
   return [
-    // cacheManager.caching(Object.assign({}, DEFAULT_MEM_CACHE_OPTS, memOpts)),
+    cacheManager.caching(Object.assign({}, DEFAULT_MEM_CACHE_OPTS, memOpts)),
     cacheManager.caching(Object.assign({}, DEFAULT_REDIS_CACHE_OPTS, redisOpts))
   ]
 }
