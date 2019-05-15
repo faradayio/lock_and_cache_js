@@ -108,11 +108,11 @@ test('RefCounter when called calls cleanup after timeout', async function (t) {
 const KEY = 'test:test_key'
 
 class CacheFixture {
-  constructor () {
+  constructor ({ autoJson = false } = {}) {
     const client = redis.createClient()
     client.flushall()
     client.quit()
-    this.cache = new cache.LockAndCache()
+    this.cache = new cache.LockAndCache({ autoJson })
     this.workCallCount = 0
   }
   async work () {
@@ -139,8 +139,14 @@ test('LockAndCache cache get transform undefined', async function (t) {
   })
 })
 
-test('LockAndCache cache get transform json', async function (t) {
+test('LockAndCache cache get transform json autoJson false', async function (t) {
   await cache.closing(new CacheFixture(), async function (f) {
+    t.deepEqual(f.cache._cacheGetTransform('{"foo": "bar"}'), '{"foo": "bar"}')
+  })
+})
+
+test('LockAndCache cache get transform json autoJson true', async function (t) {
+  await cache.closing(new CacheFixture({ autoJson: true }), async function (f) {
     t.deepEqual(f.cache._cacheGetTransform('{"foo": "bar"}'), { foo: 'bar' })
   })
 })
@@ -151,9 +157,16 @@ test('_cacheSetTransform undefined', async function (t) {
   })
 })
 
-test('_cacheSetTransform object', async function (t) {
+test('_cacheSetTransform object autojson false', async function (t) {
   const OBJ = { foo: 'bar' }
   await cache.closing(new CacheFixture(), async function (f) {
+    t.deepEqual(f.cache._cacheSetTransform(OBJ), OBJ)
+  })
+})
+
+test('_cacheSetTransform object autojson true', async function (t) {
+  const OBJ = { foo: 'bar' }
+  await cache.closing(new CacheFixture({ autoJson: true }), async function (f) {
     t.deepEqual(f.cache._cacheSetTransform(OBJ), JSON.stringify(OBJ))
   })
 })
