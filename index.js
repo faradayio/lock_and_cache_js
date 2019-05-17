@@ -21,6 +21,8 @@ const redisStore = require('cache-manager-redis-store')
 
 const inspect = require('util').inspect
 
+const ON_DEATH = require('death')
+
 function log (...message) {
   if (process.env.NODE_ENV === 'test' && !process.env.DEBUG) return
   message = [new Date(), ...message]
@@ -149,6 +151,7 @@ class LockAndCache {
     )
     this._cache = cacheManager.multiCaching(caches)
     this.get = this.Get
+    ON_DEATH(() => this.close())
   }
 
   _cacheGetTransform (value) {
