@@ -39,7 +39,6 @@ log.debug = function logDebug (...message) {
 
 const LOCK_TIMEOUT = 5000
 const LOCK_EXTEND_TIMEOUT = 2500
-const REDIS_CONN_IDLE_TIMEOUT = ['test', 'debug'].includes(process.env.NODE_ENV) ? 500 : 30000
 
 const ERROR_TTL = 1
 
@@ -89,55 +88,6 @@ async function closing (obj, cb) {
 }
 
 /**
- * Count references to a resources and call a cleanup function after refs drop
- * to zero and a timeout expires.
- */
-class RefCounter extends Function {
-  // thanks to https://stackoverflow.com/a/40878674
-  constructor (cb, cleanup, timeout) {
-    super('...args', 'return this.__call__(...args)')
-    const that = this.bind(this)
-    this._cb = cb
-    this._cleanup = cleanup
-    this._timeout = timeout
-    this._refs = 0
-    this._timeoutHandle = null
-    log.debug('refcounter timeout', timeout)
-    return that
-  }
-
-  async __call__ (...opts) {
-    log.debug('RefCounter called')
-    this._ref()
-    try {
-      log.debug('calling cb')
-      return await this._cb(...opts)
-    } finally {
-      this._unref()
-    }
-  }
-
-  _ref () {
-    clearTimeout(this._timeoutHandle)
-    this._timeoutHandle = null
-    this._refs++
-    log.debug('refs', this._refs)
-  }
-
-  _unref () {
-    this._refs--
-    log.debug('refs', this._refs)
-    if (this._refs === 0) {
-      log.debug('set cleanup timeout')
-      this._timeoutHandle = setTimeout(() => {
-        log.debug('cleaning up')
-        this._cleanup()
-      }, this._timeout)
-    }
-  }
-}
-
-/**
  * Create an array of mem/redis caches suitable for making a multi-tier cache;
  * passes opts directly to cache manager which passes directly to node redis
  * client.
@@ -165,7 +115,6 @@ function tieredCache (memOpts, redisOpts) {
 }
 
 class KeyNotFoundError extends Error {}
-class NotConnectedError extends Error {}
 
 /**
  * LockAndCache
@@ -189,7 +138,6 @@ class LockAndCache {
     caches = tieredCache(),
     lockClients = [redis.createClient(DEFAULT_REDIS_LOCK_OPTS)],
     lockOpts = DEFAULT_REDLOCK_OPTS,
-    redisIdleTimeout = false,
     autoJson = false
   } = {}) {
     this._autoJson = autoJson
@@ -200,13 +148,7 @@ class LockAndCache {
         .filter(cache => !!cache)
     )
     this._cache = cacheManager.multiCaching(caches)
-    if (redisIdleTimeout) {
-      this.get = new RefCounter(
-        this.Get.bind(this), this.close.bind(this), redisIdleTimeout)
-    } else {
-      this.get = this.Get
-    }
-    this.connected = true
+    this.get = this.Get
   }
 
   _cacheGetTransform (value) {
@@ -254,19 +196,12 @@ class LockAndCache {
     return v
   }
 
-  ensureConnected () {
-    if (!this.connected) throw new NotConnectedError()
-  }
-
   close () {
-    this.ensureConnected()
-    log.debug('closing connections', this._lockClients.length + this._cacheClients.length)
-    this.connected = false;
+    log.debug('closing connections', this._lockClients.length + this._cacheClients.length);
     [...this._lockClients, ...this._cacheClients].forEach(c => c.quit())
   }
 
   del (...opts) {
-    this.ensureConnected()
     return this._cache.del(...opts)
   }
 
@@ -288,7 +223,6 @@ class LockAndCache {
   }
 
   async Get (key, ttl, work) {
-    this.ensureConnected()
     let value, extendTimeoutHandle
     key = this._stringifyKey(key)
 
@@ -391,30 +325,7 @@ class LockAndCache {
   }
 }
 
-let _defaultCache
-
-function defaultCache () {
-  if (!_defaultCache || !_defaultCache.connected) {
-    _defaultCache = new LockAndCache({
-      redisIdleTimeout: REDIS_CONN_IDLE_TIMEOUT,
-      autoJson: true
-    })
-  }
-  return _defaultCache
-}
-
-function defaultCacheGet (...opts) {
-  return defaultCache().get(...opts)
-}
-
-function defaultCacheWrap (...opts) {
-  return defaultCache().wrap(...opts)
-}
-
-module.exports = defaultCacheGet
-module.exports.wrap = defaultCacheWrap
 module.exports.LockAndCache = LockAndCache
-module.exports.RefCounter = RefCounter
 module.exports.tieredCache = tieredCache
 module.exports.closing = closing
 module.exports.DEFAULT_MEM_CACHE_OPTS = DEFAULT_MEM_CACHE_OPTS
