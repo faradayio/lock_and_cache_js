@@ -151,7 +151,7 @@ class LockAndCache {
     )
     this._cache = cacheManager.multiCaching(caches)
     this.get = this.Get
-    ON_DEATH(() => this.close())
+    this.OFF_DEATH = ON_DEATH(() => this.close())
   }
 
   _cacheGetTransform (value) {
@@ -200,7 +200,8 @@ class LockAndCache {
   }
 
   close () {
-    log.debug('closing connections', this._lockClients.length + this._cacheClients.length);
+    log.debug('closing connections', this._lockClients.length + this._cacheClients.length)
+    this.OFF_DEATH();
     [...this._lockClients, ...this._cacheClients].forEach(c => c.quit())
   }
 
