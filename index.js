@@ -330,10 +330,6 @@ class LockAndCache {
   }
 }
 
-const _defaultCache = new LockAndCache({ autoJson: true })
-
-module.exports = _defaultCache.get.bind(_defaultCache)
-module.exports.wrap = _defaultCache.wrap.bind(_defaultCache)
 module.exports.LockAndCache = LockAndCache
 module.exports.tieredCache = tieredCache
 module.exports.closing = closing
