@@ -150,7 +150,7 @@ class LockAndCache {
         .filter(cache => !!cache)
     )
     this._cache = cacheManager.multiCaching(caches)
-    this.get = this.Get
+    this.get = this._get
     this.OFF_DEATH = ON_DEATH(() => this.close())
   }
 
@@ -226,7 +226,7 @@ class LockAndCache {
     }
   }
 
-  async Get (key, ttl, work) {
+  async _get (key, ttl, work) {
     let value, extendTimeoutHandle
     key = this._stringifyKey(key)
 
