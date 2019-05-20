@@ -225,6 +225,8 @@ class LockAndCache {
     }
   }
 
+  // this is called "get" to match up with standard cache library semantics
+  // but don't forget it also locks
   async get (key, ttl, work) {
     let value, extendTimeoutHandle
     key = this._stringifyKey(key)
