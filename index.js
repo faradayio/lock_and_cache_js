@@ -12,7 +12,6 @@ const Redlock = require('redlock')
 const cacheManager = require('cache-manager')
 const redisStore = require('cache-manager-redis-store')
 const ON_DEATH = require('death')
-const cloneDeep = require('lodash.clonedeep')
 
 const inspect = require('util').inspect
 
@@ -166,7 +165,7 @@ class LockAndCache {
     if (this._byReference) {
       return value
     }
-    return cloneDeep(value)
+    return JSON.parse(value)
   }
 
   _stringifyKey (key) {
@@ -189,7 +188,7 @@ class LockAndCache {
     if (this._byReference) {
       return value
     }
-    return cloneDeep(value)
+    return JSON.stringify(value)
   }
 
   async _cacheSet (key, value, ttl) {

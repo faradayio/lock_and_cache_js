@@ -78,8 +78,8 @@ test('LockAndCache cache get transform byReference false', async function (t) {
   const OBJ = { foo: 'bar' }
   const expected = { ...OBJ }
   await closing(new CacheFixture(), async function (f) {
-    t.deepEqual(f.cache._cacheGetTransform(OBJ), expected)
-    t.notEqual(f.cache._cacheGetTransform(OBJ), OBJ)
+    t.deepEqual(f.cache._cacheGetTransform(JSON.stringify(OBJ)), expected)
+    t.notEqual(f.cache._cacheGetTransform(JSON.stringify(OBJ)), OBJ)
   })
 })
 
@@ -100,7 +100,7 @@ test('_cacheSetTransform undefined', async function (t) {
 
 test('_cacheSetTransform object byReference false', async function (t) {
   const OBJ = { foo: 'bar' }
-  const expected = { ...OBJ }
+  const expected = JSON.stringify(OBJ)
   await closing(new CacheFixture(), async function (f) {
     t.deepEqual(f.cache._cacheSetTransform(OBJ), expected)
     t.notEqual(f.cache._cacheSetTransform(OBJ), OBJ)
@@ -161,7 +161,7 @@ class TestClass {}
       ['object', { foo: 'bar' }],
       ['array', ['foobar']],
       ['TestClass', new TestClass(), (t, ac) => {
-        if (store === 'memory') {
+        if (byReference && store === 'memory') {
           t.equal(
             (ac instanceof TestClass), true, `${ac} not instance of TestClass`)
         } else {
