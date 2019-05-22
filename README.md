@@ -7,11 +7,13 @@ Most caching libraries don't do locking, meaning that >1 process can be calculat
 ## Quickstart
 
 ```js
-const cache = require('lock_and_cache')
+const lnc = require('lock_and_cache')
+
+let cache = lock_and_cache.LockAndCache()
 
 // standalone mode
 function getStockQuote (symbol) {
-  return cache(['stock', symbol], 60, async function () {
+  return cache.get(['stock', symbol], 60, async function () {
     // fetch stock price from remote source, cache for one minute
     // calling this multiple times in parallel will only run it once
   })
@@ -26,7 +28,7 @@ const getStockQuote = cache.wrap(60, async function stock (symbol) {
 
 // custom options w immediate closing
 // options are passed thru to cache manager which passes thru to backends
-const customCache = cache.LockAndCache({
+const customCache = new lnc.LockAndCache({
   caches: cache.tieredCache({...memOpts}, {...redisOpts})
 })
 closing(customCache, async function (cache) {

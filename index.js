@@ -1,13 +1,6 @@
 /**
  * Lock and cache using redis, memory, and more!
  * @example
- * const cache = require('lock_and_cache')
- * let square = x => cache(x, x => x*x)
- * @example
- * const cache = require('lock_and_cache')
- * let square = cache.wrap(x=>x*x)
- * @example
- * const lock_and_cache = require('lock_and_cache')
  * let cache = lock_and_cache.LockAndCache()
  * let square = cache.wrap(async function foofunc (x) {return x*x})
  * const customCache = lock_and_cache.LockAndCache({opts})
@@ -18,10 +11,10 @@ const redis = require('redis')
 const Redlock = require('redlock')
 const cacheManager = require('cache-manager')
 const redisStore = require('cache-manager-redis-store')
+const ON_DEATH = require('death')
+const cloneDeep = require('lodash.clonedeep')
 
 const inspect = require('util').inspect
-
-const ON_DEATH = require('death')
 
 function log (...message) {
   if (process.env.NODE_ENV === 'test' && !process.env.DEBUG) return
@@ -121,12 +114,18 @@ class KeyNotFoundError extends Error {}
 /**
  * LockAndCache
  *
- * @example
- * LockAndCache()
- * @example
- * LockAndCache(opts)
- * @example
- * LockAndCache({caches, lockClients, lockOpts})
+ * By default, LockAndCache caches values; that is to say it deep-clones objects
+ * prior to cache insertion and subsequent to cache retrieval. This prevents
+ * bugs due to side-effects of mutation of cached data.
+ *
+ * This behavior can be changed by setting `byReference:true` in the
+ * constructor. Only memory stores correctly support byReference because other
+ * stores must necessarily serialize objects. The performance gain will depend
+ * on the size of the objects and will usually be small, but if the data is
+ * immutable then there is no reason to copy it. There are other reasons why you
+ * might want to cache the original objects, e.g. if they are difficult or
+ * impossible to serialize, e.g. class instances.
+ *
  * @example
  * const cache = LockAndCache()
  * try {
@@ -134,15 +133,24 @@ class KeyNotFoundError extends Error {}
  * } finally {
  *   cache.close()
  * }
+ *
+ *
  */
 class LockAndCache {
+  /**
+   * LockAndCache constructor
+   * @param {Array} [caches=tieredCache()]                                      Array of caches to be passed to cacheManager.multiCaching
+   * @param {Array}  [lockClients=[redis.createClient(DEFAULT_REDIS_LOCK_OPTS)]] Array of redis clients for redlock
+   * @param {Object} [lockOpts=DEFAULT_REDLOCK_OPTS]                             Options to pass to redlock constructor
+   * @param {Boolean} [byReference=false]                                                        } = {}] Cache by reference instead of value
+   */
   constructor ({
     caches = tieredCache(),
     lockClients = [redis.createClient(DEFAULT_REDIS_LOCK_OPTS)],
     lockOpts = DEFAULT_REDLOCK_OPTS,
-    autoJson = false
+    byReference = false
   } = {}) {
-    this._autoJson = autoJson
+    this._byReference = byReference
     this._lockClients = lockClients
     this._redlock = new Redlock(lockClients, lockOpts)
     this._cacheClients = (
@@ -155,15 +163,10 @@ class LockAndCache {
 
   _cacheGetTransform (value) {
     if (value === 'undefined') return undefined
-    if (this._autoJson) {
-      try {
-        return JSON.parse(value)
-      } catch (err) {
-        console.error(err, value)
-        throw err
-      }
+    if (this._byReference) {
+      return value
     }
-    return value
+    return cloneDeep(value)
   }
 
   _stringifyKey (key) {
@@ -183,10 +186,10 @@ class LockAndCache {
 
   _cacheSetTransform (value) {
     if (typeof value === 'undefined') return 'undefined'
-    if (this._autoJson) {
-      return JSON.stringify(value)
+    if (this._byReference) {
+      return value
     }
-    return value
+    return cloneDeep(value)
   }
 
   async _cacheSet (key, value, ttl) {

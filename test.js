@@ -32,7 +32,7 @@ const KEY = 'test:test_key'
 
 class CacheFixture {
   constructor ({
-    autoJson = false,
+    byReference = false,
     type = undefined,
     caches = undefined
   } = {}) {
@@ -42,7 +42,7 @@ class CacheFixture {
     } finally {
       client.quit()
     }
-    this.cache = new LockAndCache({ autoJson, caches })
+    this.cache = new LockAndCache({ byReference, caches })
     this.workCallCount = 0
     this.cachedDouble = this.cache.wrap(
       async function double (a) {
@@ -74,15 +74,21 @@ test('LockAndCache cache get transform undefined', async function (t) {
   })
 })
 
-test('LockAndCache cache get transform json autoJson false', async function (t) {
+test('LockAndCache cache get transform byReference false', async function (t) {
+  const OBJ = { foo: 'bar' }
+  const expected = { ...OBJ }
   await closing(new CacheFixture(), async function (f) {
-    t.deepEqual(f.cache._cacheGetTransform('{"foo": "bar"}'), '{"foo": "bar"}')
+    t.deepEqual(f.cache._cacheGetTransform(OBJ), expected)
+    t.notEqual(f.cache._cacheGetTransform(OBJ), OBJ)
   })
 })
 
-test('LockAndCache cache get transform json autoJson true', async function (t) {
-  await closing(new CacheFixture({ autoJson: true }), async function (f) {
-    t.deepEqual(f.cache._cacheGetTransform('{"foo": "bar"}'), { foo: 'bar' })
+test('LockAndCache cache get transform byReference true', async function (t) {
+  const OBJ = { foo: 'bar' }
+  const expected = { ...OBJ }
+  await closing(new CacheFixture({ byReference: true }), async function (f) {
+    t.deepEqual(f.cache._cacheGetTransform(OBJ), expected)
+    t.equal(f.cache._cacheGetTransform(OBJ), OBJ)
   })
 })
 
@@ -92,17 +98,21 @@ test('_cacheSetTransform undefined', async function (t) {
   })
 })
 
-test('_cacheSetTransform object autojson false', async function (t) {
+test('_cacheSetTransform object byReference false', async function (t) {
   const OBJ = { foo: 'bar' }
+  const expected = { ...OBJ }
   await closing(new CacheFixture(), async function (f) {
-    t.deepEqual(f.cache._cacheSetTransform(OBJ), OBJ)
+    t.deepEqual(f.cache._cacheSetTransform(OBJ), expected)
+    t.notEqual(f.cache._cacheSetTransform(OBJ), OBJ)
   })
 })
 
-test('_cacheSetTransform object autojson true', async function (t) {
+test('_cacheSetTransform object byReference true', async function (t) {
   const OBJ = { foo: 'bar' }
-  await closing(new CacheFixture({ autoJson: true }), async function (f) {
-    t.deepEqual(f.cache._cacheSetTransform(OBJ), JSON.stringify(OBJ))
+  const expected = { ...OBJ }
+  await closing(new CacheFixture({ byReference: true }), async function (f) {
+    t.deepEqual(f.cache._cacheSetTransform(OBJ), expected)
+    t.equal(f.cache._cacheSetTransform(OBJ), OBJ)
   })
 })
 
@@ -140,7 +150,7 @@ const stores = {
 
 class TestClass {}
 
-[true, false].forEach(autoJson => {
+[true, false].forEach(byReference => {
   ['memory', 'redis'].forEach(store => {
     [
       ['int', 1],
@@ -151,14 +161,20 @@ class TestClass {}
       ['object', { foo: 'bar' }],
       ['array', ['foobar']],
       ['TestClass', new TestClass(), (t, ac) => {
-        if (autoJson || store === 'redis') { t.equal((ac instanceof TestClass), false, `${ac} instance of TestClass`) } else { t.equal((ac instanceof TestClass), true, `${ac} not instance of TestClass`) }
+        if (store === 'memory') {
+          t.equal(
+            (ac instanceof TestClass), true, `${ac} not instance of TestClass`)
+        } else {
+          t.equal(
+            (ac instanceof TestClass), false, `${ac} instance of TestClass`)
+        }
       }]
     ].forEach(([type, value, assertion]) => {
-      test(`type: ${type}, autoJson: ${autoJson}, store: ${store}`, async function (t) {
+      test(`type: ${type}, byReference: ${byReference}, store: ${store}`, async function (t) {
         // console.log(type, value);
         await closing(
           await new CacheFixture({
-            autoJson,
+            byReference,
             caches: [cacheManager.caching(stores[store])]
           }).warmed({ key: type, value }),
           async function (f) {
