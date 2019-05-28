@@ -9,9 +9,6 @@ import {
   DEFAULT_MEM_CACHE_OPTS
 } from './'
 
-const whyisnoderunning = require('why-is-node-running') // should be your first require
-
-setTimeout(() => whyisnoderunning(), 7000)
 const cacheManager = require('cache-manager')
 
 // test.onFailure(() => {
