@@ -8,6 +8,10 @@ import {
   DEFAULT_REDIS_CACHE_OPTS,
   DEFAULT_MEM_CACHE_OPTS
 } from './'
+
+const whyisnoderunning = require('why-is-node-running') // should be your first require
+
+setTimeout(() => whyisnoderunning(), 7000)
 const cacheManager = require('cache-manager')
 
 // test.onFailure(() => {
@@ -210,4 +214,31 @@ test('fail', async function (t) {
       }
     }
   })
+})
+
+test('extend error', async function (t) {
+  const err = new Error('extend error test')
+  await closing(new CacheFixture(), async function (f) {
+    const mocklock = {
+      async lock () {
+        return {
+          async unlock () {},
+          async extend () {
+            throw err
+          }
+        }
+      }
+    }
+    f.cache._redlock = mocklock
+    try {
+      await f.cache.get('extendtest', async function work () {
+        return 'extendtest'
+      })
+    } catch (_err) {
+      t.equal(_err, err)
+      return
+    }
+    throw new Error(`expected to catch ${err}`)
+  })
+  // TODO ensure cache not set
 })

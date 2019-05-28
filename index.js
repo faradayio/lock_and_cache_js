@@ -46,8 +46,8 @@ const DEFAULT_REDIS_LOCK_OPTS = {
 const DEFAULT_REDLOCK_OPTS = (
   process.env.NODE_ENV === 'test' ? {
     driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || null,
-    retryCount: Number(process.env.LOCK_RETRY_COUNT) || 36000,
-    retryDelay: Number(process.env.LOCK_RETRY_DELAY) || 100
+    retryCount: Number(process.env.LOCK_RETRY_COUNT) || 10,
+    retryDelay: Number(process.env.LOCK_RETRY_DELAY) || 1000
   } : {
     driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || null,
     retryCount: Number(process.env.LOCK_RETRY_COUNT) || 36000,
@@ -230,7 +230,7 @@ class LockAndCache {
   // this is called "get" to match up with standard cache library semantics
   // but don't forget it also locks
   async get (key, ttl, work) {
-    let value, extendTimeoutHandle
+    let value, extendTimeoutHandle, extendErr, done
     key = this._stringifyKey(key)
 
     log.debug('get', key)
@@ -250,9 +250,14 @@ class LockAndCache {
     log.debug('locked', key)
 
     try {
-      let extend = () => {
-        lock.extend(LOCK_TIMEOUT).catch(err => log('failed to extend lock', err))
-        extendTimeoutHandle = setTimeout(extend, LOCK_EXTEND_TIMEOUT)
+      async function extend () {
+        try {
+          if (!done) { await lock.extend(LOCK_TIMEOUT) }
+        } catch (err) {
+          extendErr = err
+          return
+        }
+        if (!done) { extendTimeoutHandle = setTimeout(extend, LOCK_EXTEND_TIMEOUT) }
       }
       extend()
       try {
@@ -277,11 +282,13 @@ class LockAndCache {
           }
         }
       } finally {
-        // TODO does this really need to await? We could probably ignore the
-        // result
+        if (extendErr) {
+          throw extendErr
+        }
         await this._cacheSet(key, value, ttl)
       }
     } finally {
+      done = true
       clearTimeout(extendTimeoutHandle)
       lock.unlock()
     }
