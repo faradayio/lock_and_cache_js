@@ -230,6 +230,18 @@ class LockAndCache {
   // this is called "get" to match up with standard cache library semantics
   // but don't forget it also locks
   async get (key, ttl, work) {
+    async function extend () {
+      try {
+        if (!done) { await lock.extend(LOCK_TIMEOUT) }
+      } catch (err) {
+        extendErr = err
+        return
+      }
+      if (!done) {
+        extendTimeoutHandle = setTimeout(extend, LOCK_EXTEND_TIMEOUT)
+      }
+    }
+
     let value, extendTimeoutHandle, extendErr, done
     key = this._stringifyKey(key)
 
@@ -250,15 +262,6 @@ class LockAndCache {
     log.debug('locked', key)
 
     try {
-      async function extend () {
-        try {
-          if (!done) { await lock.extend(LOCK_TIMEOUT) }
-        } catch (err) {
-          extendErr = err
-          return
-        }
-        if (!done) { extendTimeoutHandle = setTimeout(extend, LOCK_EXTEND_TIMEOUT) }
-      }
       extend()
       try {
         return await this._cacheGet(key)
@@ -282,15 +285,17 @@ class LockAndCache {
           }
         }
       } finally {
-        if (extendErr) {
-          throw extendErr
+        if (!extendErr) {
+          await this._cacheSet(key, value, ttl)
         }
-        await this._cacheSet(key, value, ttl)
       }
     } finally {
       done = true
       clearTimeout(extendTimeoutHandle)
       lock.unlock()
+    }
+    if (extendErr) {
+      throw extendErr
     }
   }
 
