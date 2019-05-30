@@ -217,7 +217,7 @@ test('extend error', async function (t) {
   const err = new Error('extend error test')
   await closing(new CacheFixture(), async function (f) {
     const mocklock = {
-      async lock () {
+      async lockRetryExtending () {
         return {
           async unlock () {},
           async extend () {
@@ -226,7 +226,7 @@ test('extend error', async function (t) {
         }
       }
     }
-    f.cache._redlock = mocklock
+    f.cache._lockManager = mocklock
     try {
       await f.cache.get('extendtest', async function work () {
         return 'extendtest'

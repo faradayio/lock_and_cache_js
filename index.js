@@ -7,8 +7,9 @@
  * let foo = customCache.get('foo', ()=>'bar')
  */
 
+const { promisify } = require('util')
+const crypto = require('crypto')
 const redis = require('redis')
-const Redlock = require('redlock')
 const cacheManager = require('cache-manager')
 const redisStore = require('cache-manager-redis-store')
 const ON_DEATH = require('death')
@@ -43,7 +44,7 @@ const DEFAULT_REDIS_LOCK_OPTS = {
   url: (process.env.LOCK_URL || process.env.REDIS_URL || '//localhost:6379')
 }
 
-const DEFAULT_REDLOCK_OPTS = (
+const DEFAULT_LOCK_OPTS = (
   process.env.NODE_ENV === 'test' ? {
     driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || null,
     retryCount: Number(process.env.LOCK_RETRY_COUNT) || 10,
@@ -103,12 +104,132 @@ async function closing (obj, cb) {
  */
 function tieredCache (memOpts, redisOpts) {
   return [
-    cacheManager.caching(Object.assign({}, DEFAULT_MEM_CACHE_OPTS, memOpts)),
-    cacheManager.caching(Object.assign({}, DEFAULT_REDIS_CACHE_OPTS, redisOpts))
-  ]
+    cacheManager.caching(Object.assign({}, DEFAULT_MEM_CACHE_OPTS, memOpts)), cacheManager.caching(Object.assign({}, DEFAULT_REDIS_CACHE_OPTS, redisOpts)) ]
 }
 
 class KeyNotFoundError extends Error {}
+
+class AsyncRedis {
+  constructor (client) {
+    this.get = promisify(client.get).bind(client)
+    this.set = promisify(client.set).bind(client)
+    this.del = promisify(client.del).bind(client)
+    this.eval = promisify(client.eval).bind(client)
+    this.quit = promisify(client.quit).bind(client)
+  }
+}
+
+class LockError extends Error {}
+
+class Lock {
+  constructor (asyncRedisClient, key, secret, timeout) {
+    this._client = asyncRedisClient
+    this.key = key
+    this.secret = secret
+    this.timeout = timeout
+    this.done = true
+    this.extendErr = null
+    this.extendTimeoutHandle = null
+    this.extension = Promise.resolve()
+    this.locked = true
+  }
+
+  extendForever () {
+    if (this.done && !this.extendErr) {
+      this.done = false
+      this._extendForeverLoop()
+    } else {
+      throw this.extendErr
+    }
+  }
+
+  async _extendForeverLoop () {
+    try {
+      if (!this.done) {
+        this.extension = this.extend()
+        await this.extension
+        if (!this.done) {
+          this.extendTimeoutHandle = setTimeout(() =>
+            this._extendForever(), LOCK_EXTEND_TIMEOUT)
+        }
+      }
+    } catch (err) {
+      this.done = true
+      this.extendErr = err
+    }
+  }
+
+  async unlock () {
+    if (!this.locked) {
+      throw new LockError('not locked')
+    }
+    log.debug(`unlock ${this.key}, ${this.secret}`)
+    this.locked = false
+    this.done = true
+    clearTimeout(this.extendTimeoutHandle)
+    await this.extension
+    const r = await this._client.eval(
+      'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end',
+      1, this.key, this.secret
+    )
+    if (r === 0) {
+      throw new LockError('failed to unlock; lock not found')
+    }
+  }
+
+  async extend () {
+    if (!this.locked) {
+      throw new LockError('not locked')
+    }
+    log.debug(`extend ${this.key}, ${this.secret}`)
+    const r = await this._client.eval(
+      'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("pexpire", KEYS[1], ARGV[2]) else return 0 end',
+      1, this.key, this.secret, this.timeout
+    )
+    if (r === 0) {
+      throw new LockError('failed to extend; lock missing or taken')
+    }
+  }
+}
+
+class FailedToLock extends Error {}
+
+class LockManager {
+  constructor (asyncRedisClient) {
+    this._client = asyncRedisClient
+  }
+
+  async lockRetryExtending (key) {
+    const lock = await this.lockRetry(key)
+    lock.extendForever()
+    return lock
+  }
+
+  async lockRetry (key) {
+    while (true) {
+      try {
+        return await this.lock(key)
+      } catch (err) {
+        if (err instanceof FailedToLock) {
+          await new Promise(resolve => setTimeout(resolve, LOCK_EXTEND_TIMEOUT))
+        } else {
+          throw err
+        }
+      }
+    }
+  }
+
+  async lock (key) {
+    const secret = crypto.randomBytes(64)
+    const _key = 'lock:' + key
+    log.debug('try lock', _key, secret)
+    if (!await this._client.set(_key, secret, 'nx', 'px', LOCK_TIMEOUT)) {
+      throw new FailedToLock('failed to aquire lock; already locked')
+    }
+    log.debug('locked', _key, secret)
+    return new Lock(this._client, _key, secret, LOCK_TIMEOUT)
+  }
+}
 
 /**
  * LockAndCache
@@ -140,18 +261,19 @@ class LockAndCache {
    * LockAndCache constructor
    * @param {Array} [caches=tieredCache()]                                      Array of caches to be passed to cacheManager.multiCaching
    * @param {Array}  [lockClients=[redis.createClient(DEFAULT_REDIS_LOCK_OPTS)]] Array of redis clients for redlock
-   * @param {Object} [lockOpts=DEFAULT_REDLOCK_OPTS]                             Options to pass to redlock constructor
+   * @param {Object} [lockOpts=DEFAULT_LOCK_OPTS]                             Options to pass to redlock constructor
    * @param {Boolean} [byReference=false]                                                        } = {}] Cache by reference instead of value
    */
   constructor ({
     caches = tieredCache(),
-    lockClients = [redis.createClient(DEFAULT_REDIS_LOCK_OPTS)],
-    lockOpts = DEFAULT_REDLOCK_OPTS,
+    lockClient = redis.createClient(DEFAULT_REDIS_LOCK_OPTS),
+    lockOpts = DEFAULT_LOCK_OPTS,
     byReference = false
   } = {}) {
     this._byReference = byReference
-    this._lockClients = lockClients
-    this._redlock = new Redlock(lockClients, lockOpts)
+    this._lockClient = lockClient
+    this._asyncLockClient = new AsyncRedis(lockClient)
+    this._lockManager = new LockManager(this._asyncLockClient)
     this._cacheClients = (
       caches.map(cache => cache.store.getClient && cache.store.getClient())
         .filter(cache => !!cache)
@@ -201,9 +323,9 @@ class LockAndCache {
   }
 
   close () {
-    log.debug('closing connections', this._lockClients.length + this._cacheClients.length)
+    log.debug('closing connections', 1 + this._cacheClients.length)
     this.OFF_DEATH();
-    [...this._lockClients, ...this._cacheClients].forEach(c => c.quit())
+    [this._lockClient, ...this._cacheClients].forEach(c => c.quit())
   }
 
   del (...opts) {
@@ -230,19 +352,7 @@ class LockAndCache {
   // this is called "get" to match up with standard cache library semantics
   // but don't forget it also locks
   async get (key, ttl, work) {
-    async function extend () {
-      try {
-        if (!done) { await lock.extend(LOCK_TIMEOUT) }
-      } catch (err) {
-        extendErr = err
-        return
-      }
-      if (!done) {
-        extendTimeoutHandle = setTimeout(extend, LOCK_EXTEND_TIMEOUT)
-      }
-    }
-
-    let value, extendTimeoutHandle, extendErr, done
+    let value
     key = this._stringifyKey(key)
 
     log.debug('get', key)
@@ -258,11 +368,9 @@ class LockAndCache {
       if (!(err instanceof KeyNotFoundError)) throw err
     }
 
-    const lock = await this._redlock.lock('lock:' + key, LOCK_TIMEOUT)
-    log.debug('locked', key)
+    const lock = await this._lockManager.lockRetryExtending(key)
 
     try {
-      extend()
       try {
         return await this._cacheGet(key)
       } catch (err) {
@@ -285,17 +393,19 @@ class LockAndCache {
           }
         }
       } finally {
-        if (!extendErr) {
-          await this._cacheSet(key, value, ttl)
-        }
+        await lock.extend()
+        await this._cacheSet(key, value, ttl)
       }
+    } catch (err) {
+      if (lock.extendErr) {
+        log(lock.extendErr)
+      }
+      throw err
     } finally {
-      done = true
-      clearTimeout(extendTimeoutHandle)
-      lock.unlock()
+      await lock.unlock()
     }
-    if (extendErr) {
-      throw extendErr
+    if (lock.extendErr) {
+      throw lock.extendErr
     }
   }
 
