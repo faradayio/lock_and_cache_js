@@ -149,8 +149,7 @@ class Lock {
         this.extension = this.extend()
         await this.extension
         if (!this.done) {
-          this.extendTimeoutHandle = setTimeout(() =>
-            this._extendForever(), LOCK_EXTEND_TIMEOUT)
+          this.extendTimeoutHandle = setTimeout(this._extendForeverLoop.bind(this), LOCK_EXTEND_TIMEOUT)
         }
       }
     } catch (err) {
