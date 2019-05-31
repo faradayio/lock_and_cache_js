@@ -120,6 +120,8 @@ class AsyncRedis {
 }
 
 class LockError extends Error {}
+class LockExtendError extends LockError {}
+class LockUnlockError extends LockError {}
 
 class Lock {
   constructor (asyncRedisClient, key, secret, timeout) {
@@ -158,35 +160,67 @@ class Lock {
     }
   }
 
-  async unlock () {
-    if (!this.locked) {
-      throw new LockError('not locked')
-    }
-    log.debug(`unlock ${this.key}, ${this.secret}`)
-    this.locked = false
+  async _stopExtendLoop () {
     this.done = true
     clearTimeout(this.extendTimeoutHandle)
     await this.extension
+  }
+
+  async unlock () {
+    if (!this.locked) {
+      throw new LockUnlockError('not locked')
+    }
+    log.debug(`unlock ${this.key}, ${this.secret}`)
+    this.locked = false
+    await this._stopExtendLoop()
     const r = await this._client.eval(
-      'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end',
+      `if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("del", KEYS[1])
+      else
+        if redis.call("get", KEYS[1]) == false then
+          return -1
+        else
+          return -2
+        end
+      end`,
       1, this.key, this.secret
     )
     if (r === 0) {
-      throw new LockError('failed to unlock; lock not found')
+      throw new LockUnlockError('del failed; this should NEVER happen')
+    }
+    if (r === -1) {
+      throw new LockUnlockError('lock expired')
+    }
+    if (r === -2) {
+      throw new LockUnlockError('lock expired and was taken')
     }
   }
 
   async extend () {
     if (!this.locked) {
-      throw new LockError('not locked')
+      throw new LockExtendError('not locked')
     }
     log.debug(`extend ${this.key}, ${this.secret}`)
     const r = await this._client.eval(
-      'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("pexpire", KEYS[1], ARGV[2]) else return 0 end',
+      `if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("pexpire", KEYS[1], ARGV[2])
+      else
+        if redis.call("get", KEYS[1]) == false then
+          return -1
+        else
+          return -2
+        end
+      end`,
       1, this.key, this.secret, this.timeout
     )
     if (r === 0) {
-      throw new LockError('failed to extend; lock missing or taken')
+      throw new LockExtendError('pexpire failed; this should NEVER happen')
+    }
+    if (r === -1) {
+      throw new LockExtendError('lock expired')
+    }
+    if (r === -2) {
+      throw new LockExtendError('lock expired and was taken')
     }
   }
 }
@@ -219,7 +253,7 @@ class LockManager {
   }
 
   async lock (key) {
-    const secret = crypto.randomBytes(64)
+    const secret = crypto.randomBytes(64).toString('base64')
     const _key = 'lock:' + key
     log.debug('try lock', _key, secret)
     if (!await this._client.set(_key, secret, 'nx', 'px', LOCK_TIMEOUT)) {
@@ -300,7 +334,7 @@ class LockAndCache {
       throw new KeyNotFoundError(key)
     }
     value = this._cacheGetTransform(value)
-    log.debug('got', value, 'for', key)
+    // log.debug('got', JSON.stringify(value).slice(100), 'for', key)
     return value
   }
 
@@ -317,7 +351,7 @@ class LockAndCache {
     let v = await this._cache.set(key, this._cacheSetTransform(value), {
       ttl
     })
-    log.debug('set', value, 'for', key)
+    // log.debug('set', value.toString().slice(100), 'for', key)
     return v
   }
 
