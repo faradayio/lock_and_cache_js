@@ -116,6 +116,7 @@ class AsyncRedis {
     this.del = promisify(client.del).bind(client)
     this.eval = promisify(client.eval).bind(client)
     this.quit = promisify(client.quit).bind(client)
+    this.flushall = promisify(client.flushall).bind(client)
   }
 }
 
@@ -510,3 +511,4 @@ module.exports.DEFAULT_REDIS_LOCK_OPTS = DEFAULT_REDIS_LOCK_OPTS
 module.exports.KeyNotFoundError = KeyNotFoundError
 module.exports.LOCK_EXTEND_TIMEOUT = LOCK_EXTEND_TIMEOUT
 module.exports.Lock = Lock
+module.exports.AsyncRedis = AsyncRedis

@@ -8,14 +8,15 @@ import {
   DEFAULT_REDIS_CACHE_OPTS,
   DEFAULT_MEM_CACHE_OPTS,
   LOCK_EXTEND_TIMEOUT,
-  Lock
+  Lock,
+  AsyncRedis
 } from './'
 
 const cacheManager = require('cache-manager')
 
-// test.onFailure(() => {
-//   process.exit(1)
-// })
+test.onFailure(() => {
+  process.exit(1)
+})
 
 test('closing', async function (t) {
   let closeCallCount = 0
@@ -37,14 +38,16 @@ class CacheFixture {
   constructor ({
     byReference = false,
     type = undefined,
-    caches = undefined
+    caches = undefined,
+    warm = undefined
   } = {}) {
-    const client = redis.createClient()
+    const client = new AsyncRedis(redis.createClient())
     try {
       this.flushed = client.flushall()
     } finally {
       client.quit()
     }
+    this.warmed = warm ? this.flushed.then(() => this.warm(warm)) : Promise.resolve()
     this.cache = new LockAndCache({ byReference, caches })
     this.workCallCount = 0
     this.cachedDouble = this.cache.wrap(
@@ -65,7 +68,7 @@ class CacheFixture {
     this.workCallCount++
     return value
   }
-  async warmed ({ key, value } = { key: KEY, value: 'value' }) {
+  async warm ({ key, value } = { key: KEY, value: 'value' }) {
     value = key === 'undefined' ? undefined : value
     // console.log(key, value)
     let work = () => this.work(value)
@@ -77,79 +80,104 @@ class CacheFixture {
   close () { this.cache.close() }
 }
 
-test('LockAndCache cache get transform undefined', async function (t) {
-  await closing(new CacheFixture(), async function (f) {
-    t.equal(typeof f.cache._cacheGetTransform('undefined'), 'undefined')
+function cacheFixtureTest ({ name, func, fixtureOpts = {} }) {
+  test(name, async function (t) {
+    await closing(new CacheFixture(fixtureOpts), async function (f) {
+      await f.flushed
+      await f.warmed
+      await func(t, f)
+    })
   })
+}
+
+cacheFixtureTest({
+  name: 'LockAndCache cache get transform undefined',
+  func: async function (t, f) {
+    t.equal(typeof f.cache._cacheGetTransform('undefined'), 'undefined')
+  }
 })
 
-test('LockAndCache cache get transform byReference false', async function (t) {
-  const OBJ = { foo: 'bar' }
-  const expected = { ...OBJ }
-  await closing(new CacheFixture(), async function (f) {
+cacheFixtureTest({
+  name: 'LockAndCache cache get transform byReference false',
+  func: async function (t, f) {
+    const OBJ = { foo: 'bar' }
+    const expected = { ...OBJ }
     t.deepEqual(f.cache._cacheGetTransform(JSON.stringify(OBJ)), expected)
     t.notEqual(f.cache._cacheGetTransform(JSON.stringify(OBJ)), OBJ)
-  })
+  }
 })
 
-test('LockAndCache cache get transform byReference true', async function (t) {
-  const OBJ = { foo: 'bar' }
-  const expected = { ...OBJ }
-  await closing(new CacheFixture({ byReference: true }), async function (f) {
+cacheFixtureTest({
+  name: 'LockAndCache cache get transform byReference true',
+  fixtureOpts: { byReference: true },
+  func: async function (t, f) {
+    const OBJ = { foo: 'bar' }
+    const expected = { ...OBJ }
     t.deepEqual(f.cache._cacheGetTransform(OBJ), expected)
     t.equal(f.cache._cacheGetTransform(OBJ), OBJ)
-  })
+  }
 })
 
-test('_cacheSetTransform undefined', async function (t) {
-  await closing(new CacheFixture(), async function (f) {
+cacheFixtureTest({
+  name: '_cacheSetTransform undefined',
+  func: async function (t, f) {
     t.equal(f.cache._cacheSetTransform(undefined), 'undefined')
-  })
+  }
 })
 
-test('_cacheSetTransform object byReference false', async function (t) {
-  const OBJ = { foo: 'bar' }
-  const expected = JSON.stringify(OBJ)
-  await closing(new CacheFixture(), async function (f) {
+cacheFixtureTest({
+  name: '_cacheSetTransform object byReference false',
+  func: async function (t, f) {
+    const OBJ = { foo: 'bar' }
+    const expected = JSON.stringify(OBJ)
     t.deepEqual(f.cache._cacheSetTransform(OBJ), expected)
     t.notEqual(f.cache._cacheSetTransform(OBJ), OBJ)
-  })
+  }
 })
 
-test('_cacheSetTransform object byReference true', async function (t) {
-  const OBJ = { foo: 'bar' }
-  const expected = { ...OBJ }
-  await closing(new CacheFixture({ byReference: true }), async function (f) {
+cacheFixtureTest({
+  name: '_cacheSetTransform object byReference true',
+  fixtureOpts: { byReference: true },
+  func: async function (t, f) {
+    const OBJ = { foo: 'bar' }
+    const expected = { ...OBJ }
     t.deepEqual(f.cache._cacheSetTransform(OBJ), expected)
     t.equal(f.cache._cacheSetTransform(OBJ), OBJ)
-  })
+  }
 })
 
-test('_cacheGet throws KeyNotFound when key not found', async function (t) {
-  await closing(new CacheFixture(), async function (f) {
+cacheFixtureTest({
+  name: '_cacheGet throws KeyNotFound when key not found',
+  func: async function (t, f) {
     await t.rejects(
       f.cache._cacheGet('key that does not exist'),
       KeyNotFoundError
     )
-  })
+  }
 })
 
-test('_cacheGet does not throw when key found', async function (t) {
-  await closing(await new CacheFixture().warmed(), async function (f) {
+cacheFixtureTest({
+  name: '_cacheGet does not throw when key found',
+  fixtureOpts: { warm: { key: KEY, value: 'value' } },
+  func: async function (t, f) {
     await f.cache._cacheGet(KEY)
-  })
+  }
 })
 
-test('LockAndCache work called', async function (t) {
-  await closing(await new CacheFixture().warmed(), async function (f) {
+cacheFixtureTest({
+  name: 'LockAndCache work called',
+  fixtureOpts: { warm: { key: KEY, value: 'value' } },
+  func: async function (t, f) {
     t.equal(f.workCallCount, 1)
-  })
+  }
 })
 
-test('LockAndCache value', async function (t) {
-  await closing(await new CacheFixture().warmed(), async function (f) {
+cacheFixtureTest({
+  name: 'LockAndCache value',
+  fixtureOpts: { warm: { key: KEY, value: 'value' } },
+  func: async function (t, f) {
     t.equal(f.value, 'value')
-  })
+  }
 })
 
 const stores = {
@@ -179,36 +207,38 @@ class TestClass {}
         }
       }]
     ].forEach(([type, value, assertion]) => {
-      test(`type: ${type}, byReference: ${byReference}, store: ${store}`, async function (t) {
+      cacheFixtureTest({
+        name: `type: ${type}, byReference: ${byReference}, store: ${store}`,
+        fixtureOpts: {
+          byReference,
+          caches: [cacheManager.caching(stores[store])],
+          warm: { key: type, value }
+        },
+        func: async function (t, f) {
         // console.log(type, value);
-        await closing(
-          await new CacheFixture({
-            byReference,
-            caches: [cacheManager.caching(stores[store])]
-          }).warmed({ key: type, value }),
-          async function (f) {
-            // console.log(f.value, value)
-            t.deepEqual(f.value, value)
-            if (assertion) {
-              assertion(t, f.value)
-            }
+          // console.log(f.value, value)
+          t.deepEqual(f.value, value)
+          if (assertion) {
+            assertion(t, f.value)
           }
-        )
+        }
       })
     })
   })
 })
 
-test('parallel', async function (t) {
-  await closing(new CacheFixture(), async function (f) {
+cacheFixtureTest({
+  name: 'parallel',
+  func: async function (t, f) {
     let results = await Promise.all([1, 4, 3, 3, 4, 1].map(i => f.cachedDouble(i)))
     t.deepEqual(results, [2, 8, 6, 6, 8, 2])
     t.equal(f.workCallCount, 3)
-  })
+  }
 })
 
-test('fail', async function (t) {
-  await closing(new CacheFixture(), async function (f) {
+cacheFixtureTest({
+  name: 'fail',
+  func: async function (t, f) {
     const expectedErr = new TypeError('test me please')
     try {
       await f.cache.get('fail_test', 1, () => Promise.reject(expectedErr))
@@ -218,12 +248,13 @@ test('fail', async function (t) {
         t.equal(err[prop], expectedErr[prop], `should propagate rejection error ${prop}`)
       }
     }
-  })
+  }
 })
 
-test('extend error', async function (t) {
-  const err = new Error('extend error test')
-  await closing(new CacheFixture(), async function (f) {
+cacheFixtureTest({
+  name: 'extend error',
+  func: async function (t, f) {
+    const err = new Error('extend error test')
     const mocklock = {
       async lockRetryExtending () {
         return {
@@ -244,14 +275,15 @@ test('extend error', async function (t) {
       return
     }
     throw new Error(`expected to catch ${err}`)
-  })
+  }
   // TODO ensure cache not set
 })
 
-test('slowWork', async function (t) {
-  await closing(new CacheFixture(), async function (f) {
+cacheFixtureTest({
+  name: 'slowWork',
+  func: async function (t, f) {
     await f.slowWork()
-  })
+  }
 })
 
 test('missed extend deadline', async function (t) {
