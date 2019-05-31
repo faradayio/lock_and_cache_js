@@ -32,8 +32,8 @@ log.debug = function logDebug (...message) {
   log(...message)
 }
 
-const LOCK_TIMEOUT = 5000
-const LOCK_EXTEND_TIMEOUT = 2500
+const LOCK_TIMEOUT = 60000
+const LOCK_EXTEND_TIMEOUT = 5000
 
 const ERROR_TTL = 1
 
