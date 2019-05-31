@@ -6,7 +6,9 @@ import {
   closing,
   KeyNotFoundError,
   DEFAULT_REDIS_CACHE_OPTS,
-  DEFAULT_MEM_CACHE_OPTS
+  DEFAULT_MEM_CACHE_OPTS,
+  LOCK_EXTEND_TIMEOUT,
+  Lock
 } from './'
 
 const cacheManager = require('cache-manager')
@@ -39,7 +41,7 @@ class CacheFixture {
   } = {}) {
     const client = redis.createClient()
     try {
-      client.flushall()
+      this.flushed = client.flushall()
     } finally {
       client.quit()
     }
@@ -50,6 +52,12 @@ class CacheFixture {
         console.debug('excount', ++this.workCallCount, a)
         return a * 2
       }.bind(this)
+    )
+    this.slowWork = this.cache.wrap(
+      async function slowWork (a) {
+        await new Promise(resolve => setTimeout(resolve, LOCK_EXTEND_TIMEOUT * 3))
+        return 'slowWork'
+      }
     )
   }
   async work (value) {
@@ -237,5 +245,28 @@ test('extend error', async function (t) {
     }
     throw new Error(`expected to catch ${err}`)
   })
+  // TODO ensure cache not set
+})
+
+test('slowWork', async function (t) {
+  await closing(new CacheFixture(), async function (f) {
+    await f.slowWork()
+  })
+})
+
+test('missed extend deadline', async function (t) {
+  const lock = new Lock()
+  lock.extend = async function mockExtend () {
+    await new Promise(resolve => setTimeout(resolve, LOCK_EXTEND_TIMEOUT * 1.5))
+  }
+  // console.log('start extend loop')
+  lock.extendForever()
+  // console.log('wait for loop to run a few times')
+  await new Promise(resolve => setTimeout(resolve, LOCK_EXTEND_TIMEOUT * 3.5))
+  // console.log('set done')
+  lock.done = true
+  // console.log('await extension')
+  await lock.extension
+  t.equal(lock.extendMissedDeadlines, 3)
   // TODO ensure cache not set
 })

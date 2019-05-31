@@ -132,13 +132,16 @@ class Lock {
     this.done = true
     this.extendErr = null
     this.extendTimeoutHandle = null
+    this.lastExtension = null
     this.extension = Promise.resolve()
     this.locked = true
+    this.extendMissedDeadlines = 0
   }
 
   extendForever () {
     if (this.done && !this.extendErr) {
       this.done = false
+      this.lastExtension = new Date()
       this._extendForeverLoop()
     } else {
       throw this.extendErr
@@ -146,19 +149,19 @@ class Lock {
   }
 
   async _extendForeverLoop () {
-    let lastExtension = new Date()
     try {
       if (!this.done) {
-        const timestamp = new Date()
-        const latency = timestamp - lastExtension
-        lastExtension = timestamp
-        if (latency > LOCK_EXTEND_TIMEOUT) {
-          log(`warning: missed lock extension deadline by ${latency - LOCK_EXTEND_TIMEOUT}ms`)
-        }
         this.extension = this.extend()
         await this.extension
+        const timestamp = new Date()
+        const latency = timestamp - this.lastExtension
+        this.lastExtension = timestamp
+        if (latency > LOCK_EXTEND_TIMEOUT * 1.1) {
+          ++this.extendMissedDeadlines
+          log(`warning: missed lock extension deadline by ${latency - LOCK_EXTEND_TIMEOUT}ms; ${this.extendMissedDeadlines} total misses`)
+        }
         if (!this.done) {
-          const timeout = Math.max(0, LOCK_EXTEND_TIMEOUT - latency)
+          const timeout = Math.max(0, LOCK_EXTEND_TIMEOUT * 0.9 - latency)
           this.extendTimeoutHandle = setTimeout(this._extendForeverLoop.bind(this), timeout)
         }
       }
@@ -502,3 +505,5 @@ module.exports.DEFAULT_MEM_CACHE_OPTS = DEFAULT_MEM_CACHE_OPTS
 module.exports.DEFAULT_REDIS_CACHE_OPTS = DEFAULT_REDIS_CACHE_OPTS
 module.exports.DEFAULT_REDIS_LOCK_OPTS = DEFAULT_REDIS_LOCK_OPTS
 module.exports.KeyNotFoundError = KeyNotFoundError
+module.exports.LOCK_EXTEND_TIMEOUT = LOCK_EXTEND_TIMEOUT
+module.exports.Lock = Lock
