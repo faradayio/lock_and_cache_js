@@ -160,8 +160,11 @@ class Lock {
           ++this.extendMissedDeadlines
           log(`warning: missed lock extension deadline by ${latency - LOCK_EXTEND_TIMEOUT}ms; ${this.extendMissedDeadlines} total misses`)
         }
+        // scheduler overhead fudge factor
+        const SCHED_FUDGE = 100
+        const ERR_FACTOR = Math.max(0, latency - LOCK_EXTEND_TIMEOUT)
         if (!this.done) {
-          const timeout = Math.max(0, LOCK_EXTEND_TIMEOUT * 0.9 - latency)
+          const timeout = Math.max(0, LOCK_EXTEND_TIMEOUT - SCHED_FUDGE - ERR_FACTOR)
           this.extendTimeoutHandle = setTimeout(this._extendForeverLoop.bind(this), timeout)
         }
       }
