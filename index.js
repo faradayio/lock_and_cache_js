@@ -146,12 +146,20 @@ class Lock {
   }
 
   async _extendForeverLoop () {
+    let lastExtension = new Date()
     try {
       if (!this.done) {
+        const timestamp = new Date()
+        const latency = timestamp - lastExtension
+        lastExtension = timestamp
+        if (latency > LOCK_EXTEND_TIMEOUT) {
+          log(`warning: missed lock extension deadline by ${latency - LOCK_EXTEND_TIMEOUT}ms`)
+        }
         this.extension = this.extend()
         await this.extension
         if (!this.done) {
-          this.extendTimeoutHandle = setTimeout(this._extendForeverLoop.bind(this), LOCK_EXTEND_TIMEOUT)
+          const timeout = Math.max(0, LOCK_EXTEND_TIMEOUT - latency)
+          this.extendTimeoutHandle = setTimeout(this._extendForeverLoop.bind(this), timeout)
         }
       }
     } catch (err) {
