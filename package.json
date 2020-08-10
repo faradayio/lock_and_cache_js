@@ -1,8 +1,9 @@
 {
   "name": "lock_and_cache",
-  "version": "4.0.1",
+  "version": "5.0.0-alpha.1",
   "description": "Most caching libraries don't do locking, meaning that >1 process can be calculating a cached value at the same time. Since you presumably cache things because they cost CPU, database reads, or money, doesn't it make sense to lock while caching?",
-  "main": "index.js",
+  "main": "dist/lib/index.js",
+  "types": "dist/lib/index.d.ts",
   "keywords": [
     "redlock",
     "lock",
@@ -10,33 +11,46 @@
     "redis"
   ],
   "author": "Madeline Davies <npm@madd.tech>",
+  "maintainers": [
+    "Eric Kidd <eric.kidd@faraday.io>"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/faradayio/lock_and_cache_js.git"
   },
   "scripts": {
-    "test": "NODE_ENV=test babel-node test.js",
-    "lint": "standard"
+    "build": "tsc",
+    "fmt": "prettier --write .",
+    "lint": "eslint lib/**/*.ts test/**/*.ts",
+    "prepublish": "rm -rf dist && npm run build",
+    "test": "ts-node test/test.ts"
   },
+  "files": [
+    "dist/lib/**/*.d.ts",
+    "dist/lib/**/*.js"
+  ],
   "devDependencies": {
-    "babel-cli": "^6.4.0",
-    "babel-eslint": "^6.0.0",
-    "babel-plugin-syntax-async-functions": "^6.5.0",
-    "babel-plugin-transform-regenerator": "^6.5.2",
-    "babel-preset-es2015": "^6.5.0",
-    "blue-tape": "^0.2.0",
+    "@types/blue-tape": "^0.1.33",
+    "@types/node": "^14.0.27",
+    "@types/redis": "^2.8.25",
+    "@types/redlock": "^4.0.1",
+    "@typescript-eslint/eslint-plugin": "^3.8.0",
+    "@typescript-eslint/parser": "^3.8.0",
+    "blue-tape": "^1.0.0",
+    "eslint": "^7.6.0",
+    "eslint-config-prettier": "^6.11.0",
+    "eslint-plugin-prettier": "^3.1.4",
     "git-validate": "^2.1.4",
-    "standard": "^7.1.1"
+    "prettier": "^2.0.5",
+    "ts-node": "^8.10.2",
+    "typescript": "^3.9.7"
   },
   "pre-commit": [
     "lint"
   ],
   "dependencies": {
-    "redis": "^2.6.2",
-    "redlock": "^2.0.0"
-  },
-  "standard": {
-    "parser": "babel-eslint"
+    "redis": "^3.0.2",
+    "redlock": "^2.1.0"
   }
 }
