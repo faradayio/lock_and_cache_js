@@ -1,6 +1,10 @@
 module.exports = {
   root: true,
   parser: "@typescript-eslint/parser",
+  parserOptions: {
+    project: "tsconfig.json",
+    tsconfigRootDir: __dirname,
+  },
   plugins: ["@typescript-eslint"],
   extends: [
     "eslint:recommended",
@@ -8,9 +12,6 @@ module.exports = {
     "prettier/@typescript-eslint",
   ],
   rules: {
-    "prefer-const": ["warn"],
-    "no-constant-condition": ["warn"],
-    "@typescript-eslint/no-empty-function": ["warn"],
-    "@typescript-eslint/no-explicit-any": ["warn"],
+    "@typescript-eslint/no-floating-promises": ["warn"],
   },
 };

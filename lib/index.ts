@@ -1,563 +1,307 @@
-/// <reference types="../@types/cache-manager-redis-store" />
+import redis, { ClientOpts as RedisOpts } from "redis";
+import onDeath from "death";
+
+import { AsyncRedis } from "./asyncRedis";
+import { Lock, LockError, LockExpiredError, LockTakenError } from "./lock";
+import log from "./log";
+import omit from "./omit";
+import {
+  CacheKey,
+  serializeKey,
+  serializeValue,
+  serializeError,
+  deserializeValueOrError,
+} from "./serialization";
+
+// Re-export things our users might want.
+export { CacheKey, LockError, LockExpiredError, LockTakenError };
 
 /**
- * Lock and cache using redis, memory, and more!
- * @example
- * let cache = lock_and_cache.LockAndCache()
- * let square = cache.wrap(async function foofunc (x) {return x*x})
- * const customCache = lock_and_cache.LockAndCache({opts})
- * let foo = customCache.get('foo', ()=>'bar')
+ * A user-supplied function that computes a value to cache.
+ *
+ * This function may have an optional `displayName` property, which may be used
+ * as part of the cache key if this function is passed to `wrap`.
+ *
+ * By default, `WorkFn` functions do not accept arguments, but if you're using
+ * the `wrap` feature, you may want to supply an optional argument list.
  */
-
-import { promisify } from "util";
-import crypto from "crypto";
-import redis from "redis";
-import cacheManager from "cache-manager";
-import redisStore from "cache-manager-redis-store";
-import ON_DEATH from "death";
-
-import { inspect } from "util";
-
-function log(...message) {
-  if (process.env.NODE_ENV === "test" && !process.env.DEBUG) return;
-  message = [new Date(), ...message];
-  console.log(
-    ...message.map((m) => {
-      if (typeof m === "string") return m.slice(0, 100);
-      if (m instanceof Error) return m.stack;
-      if (m instanceof Date) return m.toLocaleString();
-      return inspect(m, { colors: Boolean(process.stdout.isTTY) });
-    })
-  );
-}
-
-log.debug = function logDebug(...message) {
-  if (process.env.NODE_ENV !== "debug") return;
-  log(...message);
+type WorkFn<T, Args extends CacheKey[] = []> = ((
+  ...args: Args
+) => Promise<T>) & {
+  displayName?: string;
 };
 
-const LOCK_TIMEOUT = 60000;
-export const LOCK_EXTEND_TIMEOUT = 5000;
+/** Default TTL for cached values, in seconds. */
+const DEFAULT_TTL = 600;
 
+/**
+ * How long should we cache errors, in seconds?
+ *
+ * This may be too short.
+ */
 const ERROR_TTL = 1;
 
-export const DEFAULT_REDIS_LOCK_OPTS = {
+/** What Redis URL should we use by default? */
+export function defaultRedisUrl(): string {
+  return process.env.REDIS_URL || "redis://localhost:6379";
+}
+
+/** Default options for configuring our Redis client. */
+export const DEFAULT_REDIS_LOCK_OPTS: RedisOpts = {
   retry_strategy(options) {
     return Math.min(options.attempt * 100, 3000);
   },
-  url: process.env.LOCK_URL || process.env.REDIS_URL || "//localhost:6379",
+  url: process.env.LOCK_URL || defaultRedisUrl(),
 };
 
-export const DEFAULT_LOCK_OPTS =
-  process.env.NODE_ENV === "test"
-    ? {
-        driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || null,
-        retryCount: Number(process.env.LOCK_RETRY_COUNT) || 10,
-        retryDelay: Number(process.env.LOCK_RETRY_DELAY) || 1000,
-      }
-    : {
-        driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || null,
-        retryCount: Number(process.env.LOCK_RETRY_COUNT) || 36000,
-        retryDelay: Number(process.env.LOCK_RETRY_DELAY) || 100,
-      };
+/** Create a Redis client with `DEFAULT_REDIS_LOCK_OPTIONS`. */
+function defaultRedisLockClient(): redis.RedisClient {
+  log.trace("creating Redis lock client");
+  return redis.createClient(DEFAULT_REDIS_LOCK_OPTS);
+}
 
-export const DEFAULT_MEM_CACHE_OPTS = {
-  store: "memory",
-  max: 10,
-  ttl: 30,
+/** Default options for configuring our Redis client. */
+export const DEFAULT_REDIS_CACHE_OPTS: RedisOpts = {
+  retry_strategy(options) {
+    return Math.min(options.attempt * 100, 3000);
+  },
+  url: process.env.CACHE_URL || defaultRedisUrl(),
 };
 
-export const DEFAULT_REDIS_CACHE_OPTS = {
-  store: redisStore,
-  url: process.env.CACHE_URL || process.env.REDIS_URL || "//localhost:6379",
-  ttl: 600,
+/** Create a Redis client with `DEFAULT_REDIS_LOCK_OPTIONS`. */
+function defaultRedisCacheClient(): redis.RedisClient {
+  log.trace("creating Redis cache client");
+  return redis.createClient(DEFAULT_REDIS_LOCK_OPTS);
+}
+
+/// Internal error thrown when we can't find a key in any of our caches.
+class KeyNotFoundError extends Error {
+  constructor(key: string) {
+    super(`could not find key ${key}`);
+  }
+}
+
+/** Options that can be passed to `get` and `wrap`. */
+export type GetOptions = {
+  /**
+   * "Time to live." The time to cache a value, in seconds.
+   *
+   *  Defaults to `DEFAULT_TTL`.
+   */
+  ttl?: number;
 };
 
 /**
- * runs cb() then calls obj.close()
+ * Cache expensive-to-compute values. Unlike typical caches, we take a Redis
+ * lock to ensure that we only perform expensive computations once.
  *
- * @example
- * closing(LockAndCache(), cache => console.log(cache.get('key', ()=>{return 'value'})))
- */
-export async function closing(obj, cb) {
-  try {
-    return await cb(obj);
-  } finally {
-    obj.close();
-  }
-}
-
-/**
- * Create an array of mem/redis caches suitable for making a multi-tier cache;
- * passes opts directly to cache manager which passes directly to node redis
- * client.
- *
- * An attempt to provide useful defaults is made. These are provided by the
- * DEFAULT_MEM_CACHE_OPTS and DEFAULT_REDIS_CACHE_OPTS objects. User opts
- * override. Theoretically you could override the stores even.
- *
- * See also:
- *
- * - https://github.com/BryanDonovan/node-cache-manager
- * - https://github.com/dabroek/node-cache-manager-redis-store
- * - https://github.com/NodeRedis/node_redis
- *
- * @example
- * tieredCache()
- * @example
- * tieredCache({max: 20, ttl: 60}, {ttl: 1200})
- */
-export function tieredCache(memOpts?, redisOpts?) {
-  return [
-    cacheManager.caching(Object.assign({}, DEFAULT_MEM_CACHE_OPTS, memOpts)),
-    cacheManager.caching(
-      Object.assign({}, DEFAULT_REDIS_CACHE_OPTS, redisOpts)
-    ),
-  ];
-}
-
-export class KeyNotFoundError extends Error {}
-
-export class AsyncRedis {
-  get: any;
-  set: any;
-  del: any;
-  eval: any;
-  quit: any;
-  flushall: any;
-
-  constructor(client) {
-    this.get = promisify(client.get).bind(client);
-    this.set = promisify(client.set).bind(client);
-    this.del = promisify(client.del).bind(client);
-    this.eval = promisify(client.eval).bind(client);
-    this.quit = promisify(client.quit).bind(client);
-    this.flushall = promisify(client.flushall).bind(client);
-  }
-}
-
-class LockError extends Error {}
-class LockExtendError extends LockError {}
-class LockUnlockError extends LockError {}
-
-export class Lock {
-  _client: any;
-  key: any;
-  secret: any;
-  timeout: any;
-  done: any;
-  extendErr: any;
-  extendTimeoutHandle: any;
-  lastExtension: any;
-  extension: any;
-  locked: any;
-  extendMissedDeadlines: any;
-
-  constructor(asyncRedisClient?, key?, secret?, timeout?) {
-    this._client = asyncRedisClient;
-    this.key = key;
-    this.secret = secret;
-    this.timeout = timeout;
-    this.done = true;
-    this.extendErr = null;
-    this.extendTimeoutHandle = null;
-    this.lastExtension = null;
-    this.extension = Promise.resolve();
-    this.locked = true;
-    this.extendMissedDeadlines = 0;
-  }
-
-  extendForever() {
-    if (this.done && !this.extendErr) {
-      this.done = false;
-      this.lastExtension = new Date();
-      this._extendForeverLoop();
-    } else {
-      throw this.extendErr;
-    }
-  }
-
-  async _extendForeverLoop() {
-    try {
-      if (!this.done) {
-        this.extension = this.extend();
-        await this.extension;
-        const timestamp = new Date();
-        // https://github.com/microsoft/TypeScript/issues/5710
-        const latency = +timestamp - +this.lastExtension;
-        this.lastExtension = timestamp;
-        if (latency > LOCK_EXTEND_TIMEOUT * 1.1) {
-          ++this.extendMissedDeadlines;
-          log(
-            `warning: missed lock extension deadline by ${
-              latency - LOCK_EXTEND_TIMEOUT
-            }ms; ${this.extendMissedDeadlines} total misses`
-          );
-        }
-        // scheduler overhead fudge factor
-        const SCHED_FUDGE = 100;
-        const ERR_FACTOR = Math.max(0, latency - LOCK_EXTEND_TIMEOUT);
-        if (!this.done) {
-          const timeout = Math.max(
-            0,
-            LOCK_EXTEND_TIMEOUT - SCHED_FUDGE - ERR_FACTOR
-          );
-          this.extendTimeoutHandle = setTimeout(
-            this._extendForeverLoop.bind(this),
-            timeout
-          );
-        }
-      }
-    } catch (err) {
-      this.done = true;
-      this.extendErr = err;
-    }
-  }
-
-  async _stopExtendLoop() {
-    this.done = true;
-    clearTimeout(this.extendTimeoutHandle);
-    await this.extension;
-  }
-
-  async unlock() {
-    if (!this.locked) {
-      throw new LockUnlockError("not locked");
-    }
-    log.debug(`unlock ${this.key}, ${this.secret}`);
-    this.locked = false;
-    await this._stopExtendLoop();
-    const r = await this._client.eval(
-      `if redis.call("get", KEYS[1]) == ARGV[1] then
-        return redis.call("del", KEYS[1])
-      else
-        if redis.call("get", KEYS[1]) == false then
-          return -1
-        else
-          return -2
-        end
-      end`,
-      1,
-      this.key,
-      this.secret
-    );
-    if (r === 0) {
-      throw new LockUnlockError("del failed; this should NEVER happen");
-    }
-    if (r === -1) {
-      throw new LockUnlockError("lock expired");
-    }
-    if (r === -2) {
-      throw new LockUnlockError("lock expired and was taken");
-    }
-  }
-
-  async extend() {
-    if (!this.locked) {
-      throw new LockExtendError("not locked");
-    }
-    log.debug(`extend ${this.key}, ${this.secret}`);
-    const r = await this._client.eval(
-      `if redis.call("get", KEYS[1]) == ARGV[1] then
-        return redis.call("pexpire", KEYS[1], ARGV[2])
-      else
-        if redis.call("get", KEYS[1]) == false then
-          return -1
-        else
-          return -2
-        end
-      end`,
-      1,
-      this.key,
-      this.secret,
-      this.timeout
-    );
-    if (r === 0) {
-      throw new LockExtendError("pexpire failed; this should NEVER happen");
-    }
-    if (r === -1) {
-      throw new LockExtendError("lock expired");
-    }
-    if (r === -2) {
-      throw new LockExtendError("lock expired and was taken");
-    }
-  }
-}
-
-class FailedToLock extends Error {}
-
-class LockManager {
-  _client: any;
-
-  constructor(asyncRedisClient) {
-    this._client = asyncRedisClient;
-  }
-
-  async lockRetryExtending(key) {
-    const lock = await this.lockRetry(key);
-    lock.extendForever();
-    return lock;
-  }
-
-  async lockRetry(key) {
-    while (true) {
-      try {
-        return await this.lock(key);
-      } catch (err) {
-        if (err instanceof FailedToLock) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, LOCK_EXTEND_TIMEOUT)
-          );
-        } else {
-          throw err;
-        }
-      }
-    }
-  }
-
-  async lock(key) {
-    const secret = crypto.randomBytes(64).toString("base64");
-    const _key = "lock:" + key;
-    log.debug("try lock", _key, secret);
-    if (!(await this._client.set(_key, secret, "nx", "px", LOCK_TIMEOUT))) {
-      throw new FailedToLock("failed to aquire lock; already locked");
-    }
-    log.debug("locked", _key, secret);
-    return new Lock(this._client, _key, secret, LOCK_TIMEOUT);
-  }
-}
-
-/**
- * LockAndCache
- *
- * By default, LockAndCache caches values; that is to say it deep-clones objects
- * prior to cache insertion and subsequent to cache retrieval. This prevents
- * bugs due to side-effects of mutation of cached data.
- *
- * This behavior can be changed by setting `byReference:true` in the
- * constructor. Only memory stores correctly support byReference because other
- * stores must necessarily serialize objects. The performance gain will depend
- * on the size of the objects and will usually be small, but if the data is
- * immutable then there is no reason to copy it. There are other reasons why you
- * might want to cache the original objects, e.g. if they are difficult or
- * impossible to serialize, e.g. class instances.
- *
- * @example
- * const cache = LockAndCache()
- * try {
- *   const val = cache.get('key', async function () { return 'value' })
- * } finally {
- *   cache.close()
- * }
- *
- *
+ * Cached values may be stored locally or in Redis, but they are stored in
+ * serialized form, and they are deserialized when returned from the cache.
  */
 export class LockAndCache {
-  _byReference: any;
-  _lockClient: any;
-  _asyncLockClient: any;
-  _lockManager: any;
-  _cacheClients: any;
-  _cache: any;
-  OFF_DEATH: any;
+  /** The Redis client we use for locking. */
+  private _lockClient: AsyncRedis;
+
+  /** The Redis client we use for caching. */
+  private _cacheClient: AsyncRedis;
+
+  /** Call this function to disable our SIGTERM, etc., callback. */
+  private _cancelProcessDeathHandler: () => void;
 
   /**
-   * LockAndCache constructor
-   * @param {Array} [caches=tieredCache()]                                      Array of caches to be passed to cacheManager.multiCaching
-   * @param {Array}  [lockClients=[redis.createClient(DEFAULT_REDIS_LOCK_OPTS)]] Array of redis clients for redlock
-   * @param {Object} [lockOpts=DEFAULT_LOCK_OPTS]                             Options to pass to redlock constructor
-   * @param {Boolean} [byReference=false]                                                        } = {}] Cache by reference instead of value
+   * Create a new `LockAndCache`.
+   *
+   * ```
+   * const cache = LockAndCache()
+   * try {
+   *   const val = cache.get('key', async function () { return 'value' })
+   * } finally {
+   *   cache.close()
+   * }
+   * ```
+   *
+   * Note that if you don't call `close()` on all your caches, your program will
+   * never never exit, because the Node `redis` module is like that.
+   *
+   * @param caches Caches to use. Defaults to `tieredCache()`.
+   * @param lockClient Redis client to use for locking. Defaults to using
+   * `DEFAULT_REDIS_OPTIONS`.
    */
   constructor({
-    caches = tieredCache(),
-    lockClient = redis.createClient(DEFAULT_REDIS_LOCK_OPTS),
-    lockOpts = DEFAULT_LOCK_OPTS,
-    byReference = false,
+    lockClient = defaultRedisLockClient(),
+    cacheClient = defaultRedisCacheClient(),
   } = {}) {
-    this._byReference = byReference;
-    this._lockClient = lockClient;
-    this._asyncLockClient = new AsyncRedis(lockClient);
-    this._lockManager = new LockManager(this._asyncLockClient);
-    this._cacheClients = caches
-      .map((cache) => cache.store.getClient && cache.store.getClient())
-      .filter((cache) => !!cache);
-    this._cache = cacheManager.multiCaching(caches);
-    this.OFF_DEATH = ON_DEATH(() => this.close());
+    log.trace("creating LockAndCache");
+    this._lockClient = new AsyncRedis(lockClient);
+    this._cacheClient = new AsyncRedis(cacheClient);
+
+    // TODO: The Node `redis` module will block our program from shutting down
+    // unless we manually quit the client. So we'd like  to install a process
+    // exit handler that runs automatically when we're trying to shut down to
+    // clean up Redis.
+    //
+    // But this only runs on SIGTERM and SIGINT, which is probably not what we
+    // want.
+    this._cancelProcessDeathHandler = onDeath(() => this.close());
   }
 
-  _cacheGetTransform(value) {
-    if (value === "undefined") return undefined;
-    if (this._byReference) {
-      return value;
+  /**
+   * Try to fetch an item from our cache.
+   *
+   * Throws `KeyNotFoundError` if we don't have that key cached.
+   */
+  private async _cacheGet<T>(key: CacheKey): Promise<T> {
+    const keyStr = serializeKey(key);
+    const serializedValue = await this._cacheClient.get(keyStr);
+    if (serializedValue === null) {
+      throw new KeyNotFoundError(keyStr);
     }
-    return JSON.parse(value);
+    return deserializeValueOrError<T>(serializedValue);
   }
 
-  _stringifyKey(key) {
-    return typeof key === "string" ? key : JSON.stringify(key);
+  /** Store serialized data in our cache. */
+  private async _cacheSetSerialized(
+    key: CacheKey,
+    serializedData: string,
+    ttl: number
+  ): Promise<void> {
+    const keyStr = serializeKey(key);
+    const r = await this._cacheClient.set(keyStr, serializedData, "ex", ttl);
+    if (r !== "OK")
+      throw new Error(`error caching at ${keyStr}: ${JSON.stringify(r)}`);
   }
 
-  async _cacheGet(key) {
-    key = this._stringifyKey(key);
-    let value = await this._cache.get(key);
-    if (value === null || typeof value === "undefined") {
-      throw new KeyNotFoundError(key);
-    }
-    value = this._cacheGetTransform(value);
-    // log.debug('got', JSON.stringify(value).slice(100), 'for', key)
-    return value;
+  /** Store a value in our cache. */
+  private async _cacheSetValue(
+    key: CacheKey,
+    value: unknown,
+    ttl: number
+  ): Promise<void> {
+    await this._cacheSetSerialized(key, serializeValue(value), ttl);
   }
 
-  _cacheSetTransform(value) {
-    if (typeof value === "undefined") return "undefined";
-    if (this._byReference) {
-      return value;
-    }
-    return JSON.stringify(value);
+  /** Store an error in our cache. */
+  private async _cacheSetError(
+    key: CacheKey,
+    err: Error,
+    ttl: number
+  ): Promise<void> {
+    await this._cacheSetSerialized(key, serializeError(err), ttl);
   }
 
-  async _cacheSet(key, value, ttl) {
-    key = this._stringifyKey(key);
-    let v = await this._cache.set(key, this._cacheSetTransform(value), {
-      ttl,
-    });
-    // log.debug('set', value.toString().slice(100), 'for', key)
-    return v;
+  /**
+   * Shut down this cache manager. No other functions may be called after this.
+   */
+  close(): void {
+    this._cancelProcessDeathHandler();
+    log.debug("closing cache connections");
+    this._lockClient
+      .quit()
+      .catch((err) => log.error("error quitting lock client", err));
+    this._cacheClient
+      .quit()
+      .catch((err) => log.error("error quitting cache client", err));
   }
 
-  close() {
-    log.debug("closing connections", 1 + this._cacheClients.length);
-    this.OFF_DEATH();
-    [this._lockClient, ...this._cacheClients].forEach((c) => c.quit());
+  /** Delete a key from our cache. */
+  async delete(key: CacheKey): Promise<void> {
+    await this._cacheClient.del(serializeKey(key));
   }
 
-  del(...opts) {
-    return this._cache.del(...opts);
-  }
-
-  _errorFactory(err) {
-    let serializedError;
-    if (err instanceof Error) {
-      serializedError = {};
-      if (err.name) serializedError.name = err.name;
-      if (err.message) serializedError.message = err.message;
-      if (err.stack) serializedError.stack = err.stack;
-      Object.assign(serializedError, err); // retain custom properties
-    } else {
-      serializedError = String(err);
-    }
-    return {
-      __lock_and_cache_error__: true,
-      err: serializedError,
-    };
-  }
-
-  // this is called "get" to match up with standard cache library semantics
-  // but don't forget it also locks
-  async get(key, ttl, work?) {
-    let value;
-    key = this._stringifyKey(key);
-
+  /**
+   * Either fetch a value from our cache, or compute it, cache it and return it.
+   *
+   * @param key The cache key to use.
+   * @param options Cache options. `ttl` is in seconds.
+   * @param work A function which performs an expensive caculation that we want
+   * to cache.
+   */
+  async get<T>(
+    key: CacheKey,
+    options: GetOptions,
+    work: WorkFn<T>
+  ): Promise<T> {
     log.debug("get", key);
+    const ttl = options.ttl != null ? options.ttl : DEFAULT_TTL;
 
-    if (typeof work === "undefined") {
-      work = ttl;
-      ttl = undefined;
-    }
-
+    // See if we can find something in the cache without the overhead of taking
+    // a lock.
     try {
-      return await this._cacheGet(key);
+      return await this._cacheGet<T>(key);
     } catch (err) {
       if (!(err instanceof KeyNotFoundError)) throw err;
     }
 
-    const lock = await this._lockManager.lockRetryExtending(key);
-
+    // It looks like we need to take a lock.
+    const lockKey = serializeKey(key);
+    const lock = new Lock(this._lockClient, `lock:${lockKey}`);
+    await lock.lock();
     try {
+      // Now we have the lock. See if the last lock holder left us anything.
       try {
-        return await this._cacheGet(key);
+        return await this._cacheGet<T>(key);
       } catch (err) {
         if (!(err instanceof KeyNotFoundError)) throw err;
       }
+
+      // Nope, nothing in the cache. We'll have to compute it, so keep this lock
+      // for longer time.
+      lock.extendIndefinitely();
+
+      // Try running `work` and cache what we get.
       try {
         log.debug("calling work to compute value");
-        value = await work();
-        return value;
+        const result = await work();
+        await this._cacheSetValue(key, result, ttl);
+        return result;
       } catch (err) {
-        ttl = ERROR_TTL;
-        value = this._errorFactory(err);
-        if (
-          typeof value === "object" &&
-          value !== null &&
-          value.__lock_and_cache_error__
-        ) {
-          if (typeof value.err === "object") {
-            const err = new Error();
-            Object.assign(err, value.err);
-            throw err;
-          } else {
-            throw new Error(value.err);
-          }
-        }
-      } finally {
-        await lock.extend();
-        await this._cacheSet(key, value, ttl);
+        await this._cacheSetError(key, err, ERROR_TTL);
+        throw err;
       }
-    } catch (err) {
-      if (lock.extendErr) {
-        log(lock.extendErr);
-      }
-      throw err;
     } finally {
-      await lock.unlock();
-    }
-    if (lock.extendErr) {
-      throw lock.extendErr;
+      // Let go of our lock. This may throw an error if our lock extensions
+      // failed.
+      await lock.release();
     }
   }
 
   /**
-   * wraps a function in a locking cache
-   * @param  {string|number|function} name if 3 params, ttl if 2 params, work if 1 param
-   * @param  {number|function} ttl  if 3 params, work if 2 params
-   * @param  {function} work if 3 params
-   * @return {function}      wrapped function
+   * Given a work function, wrap it in a `cache.get`, using the function's
+   * arguments as part of our cache key.
+   *
+   * @param options Cache options. `name` is the base name of our cache key.
+   * `ttl` is in seconds, and it defaults to `DEFAULT_TTL`.
+   * @param work The work function to wrap. If `options.name` is not specified,
+   * either `work.displayName` or `work.name` must be a non-empty string.
    */
-  wrap(...opts) {
-    let name, ttl, work;
-    if (opts.length === 3) {
-      [name, ttl, work] = opts;
-    } else if (opts.length === 2) {
-      [ttl, work] = opts;
-    } else if (opts.length === 1) {
-      [work] = opts;
+  wrap<T, Args extends CacheKey[] = []>(
+    options: GetOptions & { name?: string },
+    work: WorkFn<T, Args>
+  ): WorkFn<T, Args> {
+    // Parse our options.
+    let name: string;
+    if (options.name != null) {
+      name = options.name;
     } else {
-      throw new TypeError("wrap requires 1, 2, or 3 arguments");
-    }
-
-    if (typeof name !== "string") {
       name = work.displayName || work.name;
     }
+    if (name === "") {
+      throw new Error(
+        "cannot wrap an anonymous function without specifying `name`"
+      );
+    }
+    const getOptions = omit(options, "name");
 
     log.debug("wrap", name);
 
-    if (!name) {
-      throw new TypeError("lockAndCache.wrap(work) requires named function");
-    }
-
-    if (typeof name !== "string") throw new TypeError("name must be a string");
-    if (typeof work !== "function")
-      throw new TypeError("work must be a function");
-
-    const wrappedFn = async function (...args) {
+    // Wrap our function.
+    const wrappedFn = (...args: Args): Promise<T> => {
       log.debug("call wrapped", name, ...args);
-      const key = [name].concat(args);
-      return this.get(key, ttl, async function doWork() {
-        return work(...args);
-      });
-    }.bind(this);
+      const key: CacheKey[] = [name];
+      key.push(...args);
+      return this.get(key, getOptions, () => work(...args));
+    };
     wrappedFn.displayName = name;
-
     return wrappedFn;
   }
 }

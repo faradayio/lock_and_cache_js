@@ -1,47 +1,43 @@
 # lock_and_cache
 
-Lock and cache using redis!
+Lock and cache using Redis!
 
 Most caching libraries don't do locking, meaning that >1 process can be calculating a cached value at the same time. Since you presumably cache things because they cost CPU, database reads, or money, doesn't it make sense to lock while caching?
 
 ## Quickstart
 
-```js
-const lnc = require('lock_and_cache')
+```ts
+import { LockAndCache } from "../lib";
 
-let cache = lock_and_cache.LockAndCache()
+const cache = new LockAndCache();
 
-// standalone mode
-function getStockQuote (symbol) {
-  return cache.get(['stock', symbol], 60, async function () {
-    // fetch stock price from remote source, cache for one minute
-    // calling this multiple times in parallel will only run it once
-  })
+// Standalone mode.
+function getStockQuote(symbol: string) {
+  return cache.get(["stock", symbol], { ttl: 60 }, async () => {
+    // Fetch stock price from remote source, cache for one minute.
+    //
+    // Calling this multiple times in parallel will only run it once.
+    return 100;
+  });
 }
 
-// wrap mode
-const getStockQuote = cache.wrap(60, async function stock (symbol) {
-  // fetch stock price from remote source, cache for one minute
-  // calling this multiple times in parallel will only run it once
-  // the cache key is based on the function name and arguments
-})
+// Wrap mode
+async function stockQuoteHelper(symbol: string) {
+  // Fetch stock price from remote source, cache for one minute.
+  //
+  // Calling this multiple times in parallel will only run it once the cache key
+  // is based on the function name and arguments.
+  return 100;
+}
+const stockQuote = cache.wrap({ ttl: 60 }, stockQuoteHelper);
 
-// custom options w immediate closing
-// options are passed thru to cache manager which passes thru to backends
-const customCache = new lnc.LockAndCache({
-  caches: cache.tieredCache({...memOpts}, {...redisOpts})
-})
-closing(customCache, async function (cache) {
-  const value = cache.get(...)
-  const wrapped = cache.wrap(...)
-  cache.del(key)
-  ...
-})
+// If you forget this, your process will never exit.
+cache.close();
 ```
 
 ## Install
 
-```console
+```sh
 npm install --save lock_and_cache
 ```
 
@@ -62,55 +58,98 @@ As you can see, most caching libraries only take care of (1) and (4) (well, and 
 
 Just setting REDIS_URL in your environment is enough.
 
-REDIS_URL=redis://redis:6379/2
+```sh
+export REDIS_URL=redis://redis:6379/2
+```
 
 If you want to put the cache and the locks in different places (which is useful if you want to invalidate the cache without messing with any locks currently held), you can do:
 
-CACHE_URL=redis://redis:6379/2
-LOCK_URL=redis://redis:6379/3
-
-## Distributed locking
-
-Distributed locking is supported and uses [redlock](https://www.npmjs.com/package/redlock).
-
-```js
-const lockAndCache = require("lock_and_cache");
-const cache = lockAndCache.configure([
-  "redis://client-1",
-  "redis://client-2",
-  "redis://client-3",
-]);
+```sh
+export CACHE_URL=redis://redis:6379/2
+export LOCK_URL=redis://redis:6379/3
 ```
-
-All clients you specify will be used for locking, but only the first will be
-used for caching.
 
 ## API
 
-lockAndCache (_mixed_ **key**, _number_ **ttl**, _function_ **work**)
+We have full JSDoc for this library, but these are the highlights at the time of writing.
 
-- returns _Promise_
-- **key** can be a number, string, boolean, object, etc. It will be passed to
-  [JSON.stringify](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON/stringify).
-- **ttl** is the time-to-live for the cached value in _seconds_
-- **work** is the function that will be executed if the value is not cached. It
-  can return a promise.
+```ts
+/**
+ * Valid cache keys.
+ *
+ * These may only contain values that we can serialize consistently.
+ */
+export type CacheKey = string | number | boolean | null | CacheKey[];
 
-lockAndCache.configure (_mixed_ **client(s)**[, *object* **options**])
+/** Options that can be passed to `get` and `wrap`. */
+export type GetOptions = {
+  /**
+   * "Time to live." The time to cache a value, in seconds.
+   *
+   *  Defaults to `DEFAULT_TTL`.
+   */
+  ttl?: number;
+};
 
-- returns a lockAndCache function with the given configuration
-- **client(s)** can be a connection url, a [redis options object](https://www.npmjs.com/package/redis#options-object-properties),
-  or an array of connection urls and/or options objects
-- **options** get passed to [redlock](https://www.npmjs.com/package/redlock#configuration)
+/**
+ * A user-supplied function that computes a value to cache.
+ *
+ * This function may have an optional `displayName` property, which may be used
+ * as part of the cache key if this function is passed to `wrap`.
+ *
+ * By default, `WorkFn` functions do not accept arguments, but if you're using
+ * the `wrap` feature, you may want to supply an optional argument list.
+ */
+type WorkFn<T, Args extends CacheKey[] = []> = ((
+  ...args: Args
+) => Promise<T>) & {
+  displayName?: string;
+};
 
-## Global configuration
+class LockAndCache {
+  /**
+   * Create a new `LockAndCache`.
+   *
+   * @param caches Caches to use. Defaults to `tieredCache()`.
+   * @param lockClient Redis client to use for locking. Defaults to using
+   * `DEFAULT_REDIS_OPTIONS`.
+   */
+  constructor({
+    lockClient = defaultRedisLockClient(),
+    cacheClient = defaultRedisCacheClient(),
+  } = {});
 
-The `LOCK_DRIFT_FACTOR`, `LOCK_RETRY_COUNT`, and `LOCK_RETRY_DELAY` environment
-variables can be set to configure the global lockAndCache function's locking
-behavior. You probably don't need this unless the jobs you are caching are
-either very fast or very slow. By default, the global lockAndCache function
-will retry every 100ms for one hour using the standard drift factor.
+  /**
+   * Shut down this cache manager. No other functions may be called after this.
+   */
+  close(): void;
+
+  /**
+   * Either fetch a value from our cache, or compute it, cache it and return it.
+   *
+   * @param key The cache key to use.
+   * @param options Cache options. `ttl` is in seconds.
+   * @param work A function which performs an expensive caculation that we want
+   * to cache.
+   */
+  async get<T>(key: CacheKey, options: GetOptions, work: WorkFn<T>): Promise<T>;
+
+  /**
+   * Given a work function, wrap it in a `cache.get`, using the function's
+   * arguments as part of our cache key.
+   *
+   * @param options Cache options. `name` is the base name of our cache key.
+   * `ttl` is in seconds, and it defaults to `DEFAULT_TTL`.
+   * @param work The work function to wrap. If `options.name` is not specified,
+   * either `work.displayName` or `work.name` must be a non-empty string.
+   */
+  wrap<T, Args extends CacheKey[] = []>(
+    options: GetOptions & { name?: string },
+    work: WorkFn<T, Args>
+  ): WorkFn<T, Args>;
+}
+```
 
 ## Contributing
 
-Please send me your pull requests!
+Please send us your pull requests!
