@@ -114,6 +114,7 @@ interface LockAndCacheErrorWrapper {
  */
 type DataOrErr<T> = T | LockAndCacheErrorWrapper;
 
+/** Internal cache helper. */
 function lockAndCache<T>(
   getLocker: GetLockerFn,
   keyValue: unknown,
@@ -215,6 +216,9 @@ function lockAndCache<T>(
 
 /** Options for configuring `lock_and_cache`. */
 export type Options = Redlock.Options & {
+  /**
+   * Redis server to use for caching values, if different from our lock servers.
+   */
   cacheServer?: string;
 };
 
@@ -297,6 +301,7 @@ export interface CacheFn {
   ): WorkFn<T, Args>;
 }
 
+/** Create a new `cache` function using the specified parameters. */
 lockAndCache.configure = function (
   serverOrServers: string | string[],
   opts: Options
@@ -464,6 +469,10 @@ function defaultCacheUrl(): string {
   return url;
 }
 
+/**
+ * Our basic `cache` function. This can be called as `cache(...)` or
+ * `cache.wrap(...)`.
+ */
 export default lockAndCache.configure(defaultLockUrl(), {
   cacheServer: defaultCacheUrl(),
   driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || undefined,
@@ -471,4 +480,5 @@ export default lockAndCache.configure(defaultLockUrl(), {
   retryDelay: Number(process.env.LOCK_RETRY_DELAY) || 100,
 });
 
+/** Create a new `cache` function using the specified parameters. */
 export const configure = lockAndCache.configure;
