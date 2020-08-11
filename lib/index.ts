@@ -9,66 +9,69 @@
  * let foo = customCache.get('foo', ()=>'bar')
  */
 
-import { promisify } from 'util'
-import crypto from 'crypto'
-import redis from 'redis'
-import cacheManager from 'cache-manager'
-import redisStore from 'cache-manager-redis-store'
-import ON_DEATH from 'death'
+import { promisify } from "util";
+import crypto from "crypto";
+import redis from "redis";
+import cacheManager from "cache-manager";
+import redisStore from "cache-manager-redis-store";
+import ON_DEATH from "death";
 
-import { inspect } from 'util'
+import { inspect } from "util";
 
-function log (...message) {
-  if (process.env.NODE_ENV === 'test' && !process.env.DEBUG) return
-  message = [new Date(), ...message]
-  console.log(...message.map((m) => {
-    if (typeof m === 'string') return m.slice(0, 100)
-    if (m instanceof Error) return m.stack
-    if (m instanceof Date) return m.toLocaleString()
-    return inspect(m, { colors: Boolean(process.stdout.isTTY) })
-  }))
+function log(...message) {
+  if (process.env.NODE_ENV === "test" && !process.env.DEBUG) return;
+  message = [new Date(), ...message];
+  console.log(
+    ...message.map((m) => {
+      if (typeof m === "string") return m.slice(0, 100);
+      if (m instanceof Error) return m.stack;
+      if (m instanceof Date) return m.toLocaleString();
+      return inspect(m, { colors: Boolean(process.stdout.isTTY) });
+    })
+  );
 }
 
-log.debug = function logDebug (...message) {
-  if (process.env.NODE_ENV !== 'debug') return
-  log(...message)
-}
+log.debug = function logDebug(...message) {
+  if (process.env.NODE_ENV !== "debug") return;
+  log(...message);
+};
 
-const LOCK_TIMEOUT = 60000
-export const LOCK_EXTEND_TIMEOUT = 5000
+const LOCK_TIMEOUT = 60000;
+export const LOCK_EXTEND_TIMEOUT = 5000;
 
-const ERROR_TTL = 1
+const ERROR_TTL = 1;
 
 export const DEFAULT_REDIS_LOCK_OPTS = {
-  retry_strategy (options) {
-    return Math.min(options.attempt * 100, 3000)
+  retry_strategy(options) {
+    return Math.min(options.attempt * 100, 3000);
   },
-  url: (process.env.LOCK_URL || process.env.REDIS_URL || '//localhost:6379')
-}
+  url: process.env.LOCK_URL || process.env.REDIS_URL || "//localhost:6379",
+};
 
-export const DEFAULT_LOCK_OPTS = (
-  process.env.NODE_ENV === 'test' ? {
-    driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || null,
-    retryCount: Number(process.env.LOCK_RETRY_COUNT) || 10,
-    retryDelay: Number(process.env.LOCK_RETRY_DELAY) || 1000
-  } : {
-    driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || null,
-    retryCount: Number(process.env.LOCK_RETRY_COUNT) || 36000,
-    retryDelay: Number(process.env.LOCK_RETRY_DELAY) || 100
-  }
-)
+export const DEFAULT_LOCK_OPTS =
+  process.env.NODE_ENV === "test"
+    ? {
+        driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || null,
+        retryCount: Number(process.env.LOCK_RETRY_COUNT) || 10,
+        retryDelay: Number(process.env.LOCK_RETRY_DELAY) || 1000,
+      }
+    : {
+        driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || null,
+        retryCount: Number(process.env.LOCK_RETRY_COUNT) || 36000,
+        retryDelay: Number(process.env.LOCK_RETRY_DELAY) || 100,
+      };
 
 export const DEFAULT_MEM_CACHE_OPTS = {
-  store: 'memory',
+  store: "memory",
   max: 10,
-  ttl: 30
-}
+  ttl: 30,
+};
 
 export const DEFAULT_REDIS_CACHE_OPTS = {
   store: redisStore,
-  url: (process.env.CACHE_URL || process.env.REDIS_URL || '//localhost:6379'),
-  ttl: 600
-}
+  url: process.env.CACHE_URL || process.env.REDIS_URL || "//localhost:6379",
+  ttl: 600,
+};
 
 /**
  * runs cb() then calls obj.close()
@@ -76,11 +79,11 @@ export const DEFAULT_REDIS_CACHE_OPTS = {
  * @example
  * closing(LockAndCache(), cache => console.log(cache.get('key', ()=>{return 'value'})))
  */
-export async function closing (obj, cb) {
+export async function closing(obj, cb) {
   try {
-    return await cb(obj)
+    return await cb(obj);
   } finally {
-    obj.close()
+    obj.close();
   }
 }
 
@@ -104,28 +107,32 @@ export async function closing (obj, cb) {
  * @example
  * tieredCache({max: 20, ttl: 60}, {ttl: 1200})
  */
-export function tieredCache (memOpts?, redisOpts?) {
+export function tieredCache(memOpts?, redisOpts?) {
   return [
-    cacheManager.caching(Object.assign({}, DEFAULT_MEM_CACHE_OPTS, memOpts)), cacheManager.caching(Object.assign({}, DEFAULT_REDIS_CACHE_OPTS, redisOpts)) ]
+    cacheManager.caching(Object.assign({}, DEFAULT_MEM_CACHE_OPTS, memOpts)),
+    cacheManager.caching(
+      Object.assign({}, DEFAULT_REDIS_CACHE_OPTS, redisOpts)
+    ),
+  ];
 }
 
 export class KeyNotFoundError extends Error {}
 
 export class AsyncRedis {
-  get: any
-  set: any
-  del: any
-  eval: any
-  quit: any
-  flushall: any
+  get: any;
+  set: any;
+  del: any;
+  eval: any;
+  quit: any;
+  flushall: any;
 
-  constructor (client) {
-    this.get = promisify(client.get).bind(client)
-    this.set = promisify(client.set).bind(client)
-    this.del = promisify(client.del).bind(client)
-    this.eval = promisify(client.eval).bind(client)
-    this.quit = promisify(client.quit).bind(client)
-    this.flushall = promisify(client.flushall).bind(client)
+  constructor(client) {
+    this.get = promisify(client.get).bind(client);
+    this.set = promisify(client.set).bind(client);
+    this.del = promisify(client.del).bind(client);
+    this.eval = promisify(client.eval).bind(client);
+    this.quit = promisify(client.quit).bind(client);
+    this.flushall = promisify(client.flushall).bind(client);
   }
 }
 
@@ -134,82 +141,92 @@ class LockExtendError extends LockError {}
 class LockUnlockError extends LockError {}
 
 export class Lock {
-  _client: any
-  key: any
-  secret: any
-  timeout: any
-  done: any
-  extendErr: any
-  extendTimeoutHandle: any
-  lastExtension: any
-  extension: any
-  locked: any
-  extendMissedDeadlines: any
+  _client: any;
+  key: any;
+  secret: any;
+  timeout: any;
+  done: any;
+  extendErr: any;
+  extendTimeoutHandle: any;
+  lastExtension: any;
+  extension: any;
+  locked: any;
+  extendMissedDeadlines: any;
 
-  constructor (asyncRedisClient?, key?, secret?, timeout?) {
-    this._client = asyncRedisClient
-    this.key = key
-    this.secret = secret
-    this.timeout = timeout
-    this.done = true
-    this.extendErr = null
-    this.extendTimeoutHandle = null
-    this.lastExtension = null
-    this.extension = Promise.resolve()
-    this.locked = true
-    this.extendMissedDeadlines = 0
+  constructor(asyncRedisClient?, key?, secret?, timeout?) {
+    this._client = asyncRedisClient;
+    this.key = key;
+    this.secret = secret;
+    this.timeout = timeout;
+    this.done = true;
+    this.extendErr = null;
+    this.extendTimeoutHandle = null;
+    this.lastExtension = null;
+    this.extension = Promise.resolve();
+    this.locked = true;
+    this.extendMissedDeadlines = 0;
   }
 
-  extendForever () {
+  extendForever() {
     if (this.done && !this.extendErr) {
-      this.done = false
-      this.lastExtension = new Date()
-      this._extendForeverLoop()
+      this.done = false;
+      this.lastExtension = new Date();
+      this._extendForeverLoop();
     } else {
-      throw this.extendErr
+      throw this.extendErr;
     }
   }
 
-  async _extendForeverLoop () {
+  async _extendForeverLoop() {
     try {
       if (!this.done) {
-        this.extension = this.extend()
-        await this.extension
-        const timestamp = new Date()
+        this.extension = this.extend();
+        await this.extension;
+        const timestamp = new Date();
         // https://github.com/microsoft/TypeScript/issues/5710
-        const latency = +(timestamp) - +(this.lastExtension)
-        this.lastExtension = timestamp
+        const latency = +timestamp - +this.lastExtension;
+        this.lastExtension = timestamp;
         if (latency > LOCK_EXTEND_TIMEOUT * 1.1) {
-          ++this.extendMissedDeadlines
-          log(`warning: missed lock extension deadline by ${latency - LOCK_EXTEND_TIMEOUT}ms; ${this.extendMissedDeadlines} total misses`)
+          ++this.extendMissedDeadlines;
+          log(
+            `warning: missed lock extension deadline by ${
+              latency - LOCK_EXTEND_TIMEOUT
+            }ms; ${this.extendMissedDeadlines} total misses`
+          );
         }
         // scheduler overhead fudge factor
-        const SCHED_FUDGE = 100
-        const ERR_FACTOR = Math.max(0, latency - LOCK_EXTEND_TIMEOUT)
+        const SCHED_FUDGE = 100;
+        const ERR_FACTOR = Math.max(0, latency - LOCK_EXTEND_TIMEOUT);
         if (!this.done) {
-          const timeout = Math.max(0, LOCK_EXTEND_TIMEOUT - SCHED_FUDGE - ERR_FACTOR)
-          this.extendTimeoutHandle = setTimeout(this._extendForeverLoop.bind(this), timeout)
+          const timeout = Math.max(
+            0,
+            LOCK_EXTEND_TIMEOUT - SCHED_FUDGE - ERR_FACTOR
+          );
+          this.extendTimeoutHandle = setTimeout(
+            this._extendForeverLoop.bind(this),
+            timeout
+          );
         }
       }
     } catch (err) {
-      this.done = true
-      this.extendErr = err
+      this.done = true;
+      this.extendErr = err;
     }
   }
 
-  async _stopExtendLoop () {
-    this.done = true
-    clearTimeout(this.extendTimeoutHandle)
-    await this.extension
+  async _stopExtendLoop() {
+    this.done = true;
+    clearTimeout(this.extendTimeoutHandle);
+    await this.extension;
   }
 
-  async unlock () {
+  async unlock() {
     if (!this.locked) {
-      throw new LockUnlockError('not locked')
+      throw new LockUnlockError("not locked");
     }
-    log.debug(`unlock ${this.key}, ${this.secret}`)
-    this.locked = false
-    await this._stopExtendLoop()
+    log.debug(`unlock ${this.key}, ${this.secret}`);
+    this.locked = false;
+    await this._stopExtendLoop();
     const r = await this._client.eval(
       `if redis.call("get", KEYS[1]) == ARGV[1] then
         return redis.call("del", KEYS[1])
@@ -220,24 +237,26 @@ export class Lock {
           return -2
         end
       end`,
-      1, this.key, this.secret
-    )
+      1,
+      this.key,
+      this.secret
+    );
     if (r === 0) {
-      throw new LockUnlockError('del failed; this should NEVER happen')
+      throw new LockUnlockError("del failed; this should NEVER happen");
     }
     if (r === -1) {
-      throw new LockUnlockError('lock expired')
+      throw new LockUnlockError("lock expired");
     }
     if (r === -2) {
-      throw new LockUnlockError('lock expired and was taken')
+      throw new LockUnlockError("lock expired and was taken");
     }
   }
 
-  async extend () {
+  async extend() {
     if (!this.locked) {
-      throw new LockExtendError('not locked')
+      throw new LockExtendError("not locked");
     }
-    log.debug(`extend ${this.key}, ${this.secret}`)
+    log.debug(`extend ${this.key}, ${this.secret}`);
     const r = await this._client.eval(
       `if redis.call("get", KEYS[1]) == ARGV[1] then
         return redis.call("pexpire", KEYS[1], ARGV[2])
@@ -248,16 +267,19 @@ export class Lock {
           return -2
         end
       end`,
-      1, this.key, this.secret, this.timeout
-    )
+      1,
+      this.key,
+      this.secret,
+      this.timeout
+    );
     if (r === 0) {
-      throw new LockExtendError('pexpire failed; this should NEVER happen')
+      throw new LockExtendError("pexpire failed; this should NEVER happen");
     }
     if (r === -1) {
-      throw new LockExtendError('lock expired')
+      throw new LockExtendError("lock expired");
     }
     if (r === -2) {
-      throw new LockExtendError('lock expired and was taken')
+      throw new LockExtendError("lock expired and was taken");
     }
   }
 }
@@ -265,41 +287,43 @@ export class Lock {
 class FailedToLock extends Error {}
 
 class LockManager {
-  _client: any
+  _client: any;
 
-  constructor (asyncRedisClient) {
-    this._client = asyncRedisClient
+  constructor(asyncRedisClient) {
+    this._client = asyncRedisClient;
   }
 
-  async lockRetryExtending (key) {
-    const lock = await this.lockRetry(key)
-    lock.extendForever()
-    return lock
+  async lockRetryExtending(key) {
+    const lock = await this.lockRetry(key);
+    lock.extendForever();
+    return lock;
   }
 
-  async lockRetry (key) {
+  async lockRetry(key) {
     while (true) {
       try {
-        return await this.lock(key)
+        return await this.lock(key);
       } catch (err) {
         if (err instanceof FailedToLock) {
-          await new Promise(resolve => setTimeout(resolve, LOCK_EXTEND_TIMEOUT))
+          await new Promise((resolve) =>
+            setTimeout(resolve, LOCK_EXTEND_TIMEOUT)
+          );
         } else {
-          throw err
+          throw err;
         }
       }
     }
   }
 
-  async lock (key) {
-    const secret = crypto.randomBytes(64).toString('base64')
-    const _key = 'lock:' + key
-    log.debug('try lock', _key, secret)
-    if (!await this._client.set(_key, secret, 'nx', 'px', LOCK_TIMEOUT)) {
-      throw new FailedToLock('failed to aquire lock; already locked')
+  async lock(key) {
+    const secret = crypto.randomBytes(64).toString("base64");
+    const _key = "lock:" + key;
+    log.debug("try lock", _key, secret);
+    if (!(await this._client.set(_key, secret, "nx", "px", LOCK_TIMEOUT))) {
+      throw new FailedToLock("failed to aquire lock; already locked");
     }
-    log.debug('locked', _key, secret)
-    return new Lock(this._client, _key, secret, LOCK_TIMEOUT)
+    log.debug("locked", _key, secret);
+    return new Lock(this._client, _key, secret, LOCK_TIMEOUT);
   }
 }
 
@@ -329,13 +353,13 @@ class LockManager {
  *
  */
 export class LockAndCache {
-  _byReference: any
-  _lockClient: any
-  _asyncLockClient: any
-  _lockManager: any
-  _cacheClients: any
-  _cache: any
-  OFF_DEATH: any
+  _byReference: any;
+  _lockClient: any;
+  _asyncLockClient: any;
+  _lockManager: any;
+  _cacheClients: any;
+  _cache: any;
+  OFF_DEATH: any;
 
   /**
    * LockAndCache constructor
@@ -344,148 +368,151 @@ export class LockAndCache {
    * @param {Object} [lockOpts=DEFAULT_LOCK_OPTS]                             Options to pass to redlock constructor
    * @param {Boolean} [byReference=false]                                                        } = {}] Cache by reference instead of value
    */
-  constructor ({
+  constructor({
     caches = tieredCache(),
     lockClient = redis.createClient(DEFAULT_REDIS_LOCK_OPTS),
     lockOpts = DEFAULT_LOCK_OPTS,
-    byReference = false
+    byReference = false,
   } = {}) {
-    this._byReference = byReference
-    this._lockClient = lockClient
-    this._asyncLockClient = new AsyncRedis(lockClient)
-    this._lockManager = new LockManager(this._asyncLockClient)
-    this._cacheClients = (
-      caches.map(cache => cache.store.getClient && cache.store.getClient())
-        .filter(cache => !!cache)
-    )
-    this._cache = cacheManager.multiCaching(caches)
-    this.OFF_DEATH = ON_DEATH(() => this.close())
+    this._byReference = byReference;
+    this._lockClient = lockClient;
+    this._asyncLockClient = new AsyncRedis(lockClient);
+    this._lockManager = new LockManager(this._asyncLockClient);
+    this._cacheClients = caches
+      .map((cache) => cache.store.getClient && cache.store.getClient())
+      .filter((cache) => !!cache);
+    this._cache = cacheManager.multiCaching(caches);
+    this.OFF_DEATH = ON_DEATH(() => this.close());
   }
 
-  _cacheGetTransform (value) {
-    if (value === 'undefined') return undefined
+  _cacheGetTransform(value) {
+    if (value === "undefined") return undefined;
     if (this._byReference) {
-      return value
+      return value;
     }
-    return JSON.parse(value)
+    return JSON.parse(value);
   }
 
-  _stringifyKey (key) {
-    return typeof key === 'string' ? key : JSON.stringify(key)
+  _stringifyKey(key) {
+    return typeof key === "string" ? key : JSON.stringify(key);
   }
 
-  async _cacheGet (key) {
-    key = this._stringifyKey(key)
-    let value = await this._cache.get(key)
-    if (value === null || typeof value === 'undefined') {
-      throw new KeyNotFoundError(key)
+  async _cacheGet(key) {
+    key = this._stringifyKey(key);
+    let value = await this._cache.get(key);
+    if (value === null || typeof value === "undefined") {
+      throw new KeyNotFoundError(key);
     }
-    value = this._cacheGetTransform(value)
+    value = this._cacheGetTransform(value);
     // log.debug('got', JSON.stringify(value).slice(100), 'for', key)
-    return value
+    return value;
   }
 
-  _cacheSetTransform (value) {
-    if (typeof value === 'undefined') return 'undefined'
+  _cacheSetTransform(value) {
+    if (typeof value === "undefined") return "undefined";
     if (this._byReference) {
-      return value
+      return value;
     }
-    return JSON.stringify(value)
+    return JSON.stringify(value);
   }
 
-  async _cacheSet (key, value, ttl) {
-    key = this._stringifyKey(key)
+  async _cacheSet(key, value, ttl) {
+    key = this._stringifyKey(key);
     let v = await this._cache.set(key, this._cacheSetTransform(value), {
-      ttl
-    })
+      ttl,
+    });
     // log.debug('set', value.toString().slice(100), 'for', key)
-    return v
+    return v;
   }
 
-  close () {
-    log.debug('closing connections', 1 + this._cacheClients.length)
+  close() {
+    log.debug("closing connections", 1 + this._cacheClients.length);
     this.OFF_DEATH();
-    [this._lockClient, ...this._cacheClients].forEach(c => c.quit())
+    [this._lockClient, ...this._cacheClients].forEach((c) => c.quit());
   }
 
-  del (...opts) {
-    return this._cache.del(...opts)
+  del(...opts) {
+    return this._cache.del(...opts);
   }
 
-  _errorFactory (err) {
-    let serializedError
+  _errorFactory(err) {
+    let serializedError;
     if (err instanceof Error) {
-      serializedError = {}
-      if (err.name) serializedError.name = err.name
-      if (err.message) serializedError.message = err.message
-      if (err.stack) serializedError.stack = err.stack
-      Object.assign(serializedError, err) // retain custom properties
+      serializedError = {};
+      if (err.name) serializedError.name = err.name;
+      if (err.message) serializedError.message = err.message;
+      if (err.stack) serializedError.stack = err.stack;
+      Object.assign(serializedError, err); // retain custom properties
     } else {
-      serializedError = String(err)
+      serializedError = String(err);
     }
     return {
       __lock_and_cache_error__: true,
-      err: serializedError
-    }
+      err: serializedError,
+    };
   }
 
   // this is called "get" to match up with standard cache library semantics
   // but don't forget it also locks
-  async get (key, ttl, work?) {
-    let value
-    key = this._stringifyKey(key)
+  async get(key, ttl, work?) {
+    let value;
+    key = this._stringifyKey(key);
 
-    log.debug('get', key)
+    log.debug("get", key);
 
-    if (typeof work === 'undefined') {
-      work = ttl
-      ttl = undefined
+    if (typeof work === "undefined") {
+      work = ttl;
+      ttl = undefined;
     }
 
     try {
-      return await this._cacheGet(key)
+      return await this._cacheGet(key);
     } catch (err) {
-      if (!(err instanceof KeyNotFoundError)) throw err
+      if (!(err instanceof KeyNotFoundError)) throw err;
     }
 
-    const lock = await this._lockManager.lockRetryExtending(key)
+    const lock = await this._lockManager.lockRetryExtending(key);
 
     try {
       try {
-        return await this._cacheGet(key)
+        return await this._cacheGet(key);
       } catch (err) {
-        if (!(err instanceof KeyNotFoundError)) throw err
+        if (!(err instanceof KeyNotFoundError)) throw err;
       }
       try {
-        log.debug('calling work to compute value')
-        value = await work()
-        return value
+        log.debug("calling work to compute value");
+        value = await work();
+        return value;
       } catch (err) {
-        ttl = ERROR_TTL
-        value = this._errorFactory(err)
-        if (typeof value === 'object' && value !== null && value.__lock_and_cache_error__) {
-          if (typeof value.err === 'object') {
-            const err = new Error()
-            Object.assign(err, value.err)
-            throw err
+        ttl = ERROR_TTL;
+        value = this._errorFactory(err);
+        if (
+          typeof value === "object" &&
+          value !== null &&
+          value.__lock_and_cache_error__
+        ) {
+          if (typeof value.err === "object") {
+            const err = new Error();
+            Object.assign(err, value.err);
+            throw err;
           } else {
-            throw new Error(value.err)
+            throw new Error(value.err);
           }
         }
       } finally {
-        await lock.extend()
-        await this._cacheSet(key, value, ttl)
+        await lock.extend();
+        await this._cacheSet(key, value, ttl);
       }
     } catch (err) {
       if (lock.extendErr) {
-        log(lock.extendErr)
+        log(lock.extendErr);
       }
-      throw err
+      throw err;
     } finally {
-      await lock.unlock()
+      await lock.unlock();
     }
     if (lock.extendErr) {
-      throw lock.extendErr
+      throw lock.extendErr;
     }
   }
 
@@ -496,40 +523,41 @@ export class LockAndCache {
    * @param  {function} work if 3 params
    * @return {function}      wrapped function
    */
-  wrap (...opts) {
-    let name, ttl, work
+  wrap(...opts) {
+    let name, ttl, work;
     if (opts.length === 3) {
-      [name, ttl, work] = opts
+      [name, ttl, work] = opts;
     } else if (opts.length === 2) {
-      [ttl, work] = opts
+      [ttl, work] = opts;
     } else if (opts.length === 1) {
-      [work] = opts
+      [work] = opts;
     } else {
-      throw new TypeError('wrap requires 1, 2, or 3 arguments')
+      throw new TypeError("wrap requires 1, 2, or 3 arguments");
     }
 
-    if (typeof name !== 'string') {
-      name = work.displayName || work.name
+    if (typeof name !== "string") {
+      name = work.displayName || work.name;
     }
 
-    log.debug('wrap', name)
+    log.debug("wrap", name);
 
     if (!name) {
-      throw new TypeError('lockAndCache.wrap(work) requires named function')
+      throw new TypeError("lockAndCache.wrap(work) requires named function");
     }
 
-    if (typeof name !== 'string') throw new TypeError('name must be a string')
-    if (typeof work !== 'function') throw new TypeError('work must be a function')
+    if (typeof name !== "string") throw new TypeError("name must be a string");
+    if (typeof work !== "function")
+      throw new TypeError("work must be a function");
 
     const wrappedFn = async function (...args) {
-      log.debug('call wrapped', name, ...args)
-      const key = [name].concat(args)
-      return this.get(key, ttl, async function doWork () {
-        return work(...args)
-      })
-    }.bind(this)
-    wrappedFn.displayName = name
+      log.debug("call wrapped", name, ...args);
+      const key = [name].concat(args);
+      return this.get(key, ttl, async function doWork() {
+        return work(...args);
+      });
+    }.bind(this);
+    wrappedFn.displayName = name;
 
-    return wrappedFn
+    return wrappedFn;
   }
 }

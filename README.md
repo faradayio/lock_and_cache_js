@@ -74,12 +74,12 @@ LOCK_URL=redis://redis:6379/3
 Distributed locking is supported and uses [redlock](https://www.npmjs.com/package/redlock).
 
 ```js
-const lockAndCache = require('lock_and_cache')
+const lockAndCache = require("lock_and_cache");
 const cache = lockAndCache.configure([
-  'redis://client-1',
-  'redis://client-2',
-  'redis://client-3'
-])
+  "redis://client-1",
+  "redis://client-2",
+  "redis://client-3",
+]);
 ```
 
 All clients you specify will be used for locking, but only the first will be
@@ -87,21 +87,21 @@ used for caching.
 
 ## API
 
-lockAndCache (*mixed* **key**, *number* **ttl**, *function* **work**)
+lockAndCache (_mixed_ **key**, _number_ **ttl**, _function_ **work**)
 
-* returns *Promise*
-* **key** can be a number, string, boolean, object, etc. It will be passed to
+- returns _Promise_
+- **key** can be a number, string, boolean, object, etc. It will be passed to
   [JSON.stringify](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON/stringify).
-* **ttl** is the time-to-live for the cached value in _seconds_
-* **work** is the function that will be executed if the value is not cached. It
-can return a promise.
+- **ttl** is the time-to-live for the cached value in _seconds_
+- **work** is the function that will be executed if the value is not cached. It
+  can return a promise.
 
-lockAndCache.configure (*mixed* **client(s)**[, *object* **options**])
+lockAndCache.configure (_mixed_ **client(s)**[, *object* **options**])
 
- * returns a lockAndCache function with the given configuration
- * **client(s)** can be a connection url, a [redis options object](https://www.npmjs.com/package/redis#options-object-properties),
-   or an array of connection urls and/or options objects
- * **options** get passed to [redlock](https://www.npmjs.com/package/redlock#configuration)
+- returns a lockAndCache function with the given configuration
+- **client(s)** can be a connection url, a [redis options object](https://www.npmjs.com/package/redis#options-object-properties),
+  or an array of connection urls and/or options objects
+- **options** get passed to [redlock](https://www.npmjs.com/package/redlock#configuration)
 
 ## Global configuration
 
