@@ -1,5 +1,6 @@
 import test from 'tape-promise/tape'
 import redis from 'redis'
+import cacheManager  from 'cache-manager'
 
 import {
   LockAndCache,
@@ -10,9 +11,7 @@ import {
   LOCK_EXTEND_TIMEOUT,
   Lock,
   AsyncRedis
-} from './'
-
-const cacheManager = require('cache-manager')
+} from '../lib'
 
 test.onFailure(() => {
   process.exit(1)
@@ -35,6 +34,14 @@ test('closing', async function (t) {
 const KEY = 'test:test_key'
 
 class CacheFixture {
+  flushed: any
+  warmed: any
+  cache: any
+  workCallCount: any
+  cachedDouble: any
+  slowWork: any
+  value: any
+
   constructor ({
     byReference = false,
     type = undefined,
@@ -206,7 +213,7 @@ class TestClass {}
             (ac instanceof TestClass), false, `${ac} instance of TestClass`)
         }
       }]
-    ].forEach(([type, value, assertion]) => {
+    ].forEach(([type, value, assertion]: [any, any, any]) => {
       cacheFixtureTest({
         name: `type: ${type}, byReference: ${byReference}, store: ${store}`,
         fixtureOpts: {

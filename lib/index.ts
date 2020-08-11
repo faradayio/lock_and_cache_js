@@ -1,3 +1,5 @@
+/// <reference types="../@types/cache-manager-redis-store" />
+
 /**
  * Lock and cache using redis, memory, and more!
  * @example
@@ -7,14 +9,14 @@
  * let foo = customCache.get('foo', ()=>'bar')
  */
 
-const { promisify } = require('util')
-const crypto = require('crypto')
-const redis = require('redis')
-const cacheManager = require('cache-manager')
-const redisStore = require('cache-manager-redis-store')
-const ON_DEATH = require('death')
+import { promisify } from 'util'
+import crypto from 'crypto'
+import redis from 'redis'
+import cacheManager from 'cache-manager'
+import redisStore from 'cache-manager-redis-store'
+import ON_DEATH from 'death'
 
-const inspect = require('util').inspect
+import { inspect } from 'util'
 
 function log (...message) {
   if (process.env.NODE_ENV === 'test' && !process.env.DEBUG) return
@@ -33,18 +35,18 @@ log.debug = function logDebug (...message) {
 }
 
 const LOCK_TIMEOUT = 60000
-const LOCK_EXTEND_TIMEOUT = 5000
+export const LOCK_EXTEND_TIMEOUT = 5000
 
 const ERROR_TTL = 1
 
-const DEFAULT_REDIS_LOCK_OPTS = {
+export const DEFAULT_REDIS_LOCK_OPTS = {
   retry_strategy (options) {
     return Math.min(options.attempt * 100, 3000)
   },
   url: (process.env.LOCK_URL || process.env.REDIS_URL || '//localhost:6379')
 }
 
-const DEFAULT_LOCK_OPTS = (
+export const DEFAULT_LOCK_OPTS = (
   process.env.NODE_ENV === 'test' ? {
     driftFactor: Number(process.env.LOCK_DRIFT_FACTOR) || null,
     retryCount: Number(process.env.LOCK_RETRY_COUNT) || 10,
@@ -56,13 +58,13 @@ const DEFAULT_LOCK_OPTS = (
   }
 )
 
-const DEFAULT_MEM_CACHE_OPTS = {
+export const DEFAULT_MEM_CACHE_OPTS = {
   store: 'memory',
   max: 10,
   ttl: 30
 }
 
-const DEFAULT_REDIS_CACHE_OPTS = {
+export const DEFAULT_REDIS_CACHE_OPTS = {
   store: redisStore,
   url: (process.env.CACHE_URL || process.env.REDIS_URL || '//localhost:6379'),
   ttl: 600
@@ -74,7 +76,7 @@ const DEFAULT_REDIS_CACHE_OPTS = {
  * @example
  * closing(LockAndCache(), cache => console.log(cache.get('key', ()=>{return 'value'})))
  */
-async function closing (obj, cb) {
+export async function closing (obj, cb) {
   try {
     return await cb(obj)
   } finally {
@@ -102,14 +104,21 @@ async function closing (obj, cb) {
  * @example
  * tieredCache({max: 20, ttl: 60}, {ttl: 1200})
  */
-function tieredCache (memOpts, redisOpts) {
+export function tieredCache (memOpts?, redisOpts?) {
   return [
     cacheManager.caching(Object.assign({}, DEFAULT_MEM_CACHE_OPTS, memOpts)), cacheManager.caching(Object.assign({}, DEFAULT_REDIS_CACHE_OPTS, redisOpts)) ]
 }
 
-class KeyNotFoundError extends Error {}
+export class KeyNotFoundError extends Error {}
 
-class AsyncRedis {
+export class AsyncRedis {
+  get: any
+  set: any
+  del: any
+  eval: any
+  quit: any
+  flushall: any
+
   constructor (client) {
     this.get = promisify(client.get).bind(client)
     this.set = promisify(client.set).bind(client)
@@ -124,8 +133,20 @@ class LockError extends Error {}
 class LockExtendError extends LockError {}
 class LockUnlockError extends LockError {}
 
-class Lock {
-  constructor (asyncRedisClient, key, secret, timeout) {
+export class Lock {
+  _client: any
+  key: any
+  secret: any
+  timeout: any
+  done: any
+  extendErr: any
+  extendTimeoutHandle: any
+  lastExtension: any
+  extension: any
+  locked: any
+  extendMissedDeadlines: any
+
+  constructor (asyncRedisClient?, key?, secret?, timeout?) {
     this._client = asyncRedisClient
     this.key = key
     this.secret = secret
@@ -155,7 +176,8 @@ class Lock {
         this.extension = this.extend()
         await this.extension
         const timestamp = new Date()
-        const latency = timestamp - this.lastExtension
+        // https://github.com/microsoft/TypeScript/issues/5710
+        const latency = +(timestamp) - +(this.lastExtension)
         this.lastExtension = timestamp
         if (latency > LOCK_EXTEND_TIMEOUT * 1.1) {
           ++this.extendMissedDeadlines
@@ -243,6 +265,8 @@ class Lock {
 class FailedToLock extends Error {}
 
 class LockManager {
+  _client: any
+
   constructor (asyncRedisClient) {
     this._client = asyncRedisClient
   }
@@ -304,7 +328,15 @@ class LockManager {
  *
  *
  */
-class LockAndCache {
+export class LockAndCache {
+  _byReference: any
+  _lockClient: any
+  _asyncLockClient: any
+  _lockManager: any
+  _cacheClients: any
+  _cache: any
+  OFF_DEATH: any
+
   /**
    * LockAndCache constructor
    * @param {Array} [caches=tieredCache()]                                      Array of caches to be passed to cacheManager.multiCaching
@@ -399,7 +431,7 @@ class LockAndCache {
 
   // this is called "get" to match up with standard cache library semantics
   // but don't forget it also locks
-  async get (key, ttl, work) {
+  async get (key, ttl, work?) {
     let value
     key = this._stringifyKey(key)
 
@@ -501,14 +533,3 @@ class LockAndCache {
     return wrappedFn
   }
 }
-
-module.exports.LockAndCache = LockAndCache
-module.exports.tieredCache = tieredCache
-module.exports.closing = closing
-module.exports.DEFAULT_MEM_CACHE_OPTS = DEFAULT_MEM_CACHE_OPTS
-module.exports.DEFAULT_REDIS_CACHE_OPTS = DEFAULT_REDIS_CACHE_OPTS
-module.exports.DEFAULT_REDIS_LOCK_OPTS = DEFAULT_REDIS_LOCK_OPTS
-module.exports.KeyNotFoundError = KeyNotFoundError
-module.exports.LOCK_EXTEND_TIMEOUT = LOCK_EXTEND_TIMEOUT
-module.exports.Lock = Lock
-module.exports.AsyncRedis = AsyncRedis

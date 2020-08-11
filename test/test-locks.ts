@@ -1,7 +1,7 @@
-const { LockAndCache } = require('./')
+import { LockAndCache } from '../lib'
 
-// const redis = require('redis')
-const cacheManager = require('cache-manager')
+//import redis from 'redis'
+import cacheManager from 'cache-manager'
 
 const KEY = 'test:test_key'
 
