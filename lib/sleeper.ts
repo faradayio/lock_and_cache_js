@@ -1,35 +1,51 @@
-import { assert } from "console";
+import assert from "assert";
 
 import log from "./log";
 
-/** What state is our `Sleeper` in? */
-enum SleeperState {
-  /** We are ready to sleep. */
-  Ready,
-  /** We are currently sleeping. */
-  Sleeping,
-  /** We will never sleep again. */
-  CanceledForAllTime,
-}
+/**
+ * What state is our `Sleeper` in?
+ *
+ * This type union uses TypeScript magic to work like a Rust enumeration. When
+ * we compare `this.state.name` against a known state name, TypeScript narrows
+ * down the fields available on our state.
+ *
+ * We use this relatively heavyweight state tracking representation because we
+ * have a number of member variables that are only present in certain states,
+ * and we want to be very careful about how we manage them.
+ */
+type SleeperState = ReadyState | SleepingState | CanceledForAllTimeState;
+
+/** We are ready to sleep. */
+type ReadyState = {
+  /** The name of this state. */
+  name: "READY";
+};
+
+/** We are currently sleeping. */
+type SleepingState = {
+  /** The name of this state. */
+  name: "SLEEPING";
+
+  /** The timeout that will fire when the sleep ends. */
+  timeoutHandle: NodeJS.Timeout;
+
+  /**
+   * Somebody is calling `await sleeper.sleepSecs`. Calling this will wake them
+   * up.
+   */
+  resolve: () => void;
+};
+
+/** We will never sleep again. */
+type CanceledForAllTimeState = {
+  /** The name of this state. */
+  name: "CANCELED_FOR_ALL_TIME";
+};
 
 /** A utility class that provides interruptible sleep. */
 export class Sleeper {
   /** The state of this `Sleeper`. */
   private state: SleeperState;
-
-  /**
-   * If this handle is present, we have a sleep timeout queued up.
-   */
-  private timeoutHandle: NodeJS.Timeout | null;
-
-  /**
-   * If this function is present, somebody is waiting on `sleepSecs`. Calling
-   * this will wake them up.
-   *
-   * Technically I think JavaScript allows us to call this more than once, but
-   * we try to avoid doing that.
-   */
-  private resolve: (() => void) | null;
 
   /**
    * Create a new `Sleeper`.
@@ -43,9 +59,7 @@ export class Sleeper {
    * ```
    */
   constructor() {
-    this.state = SleeperState.Ready;
-    this.timeoutHandle = null;
-    this.resolve = null;
+    this.state = { name: "READY" };
   }
 
   /**
@@ -55,42 +69,41 @@ export class Sleeper {
    * @param secs The number of seconds to sleep.
    */
   sleepSecs(secs: number): Promise<void> {
-    log.trace("sleepSecs", secs);
+    log.trace("sleepSecs", secs, "in", this.state.name);
+
     // If we've been canceled, don't even start sleeping.
-    if (this.state === SleeperState.CanceledForAllTime) {
+    if (this.state.name === "CANCELED_FOR_ALL_TIME") {
       // Return a pre-resolved promise.
       return Promise.resolve();
     }
 
     // Install a timeout with a callback.
     assert(
-      this.state === SleeperState.Ready,
-      `cannot sleep in state ${this.state}`
+      this.state.name === "READY",
+      `cannot sleep in state ${JSON.stringify(this.state)}`
     );
-    assert(
-      this.resolve === null,
-      "found existing resolver when we want to sleep"
-    );
-    this.state = SleeperState.Sleeping;
     return new Promise((resolve) => {
-      this.resolve = resolve;
-      this.timeoutHandle = setTimeout(() => {
-        this.wakeUpAfterTimeout();
-      }, secs * 1000);
+      this.state = {
+        name: "SLEEPING",
+        resolve,
+        timeoutHandle: setTimeout(() => {
+          this.wakeUpAfterTimeout();
+        }, secs * 1000),
+      };
     });
   }
 
   /** Internal function called at the end of a regular sleep. */
   private wakeUpAfterTimeout(): void {
-    log.trace("wakeUpAfterTimeout");
+    log.trace("wakeUpAfterTimeout in", this.state.name);
     assert(
-      this.state === SleeperState.Sleeping ||
-        this.state == SleeperState.CanceledForAllTime,
-      "Tried to wake up when we were already awake"
+      this.state.name === "SLEEPING",
+      `Tried to wake up in state ${this.state.name}`
     );
-    this.resolveIfSleeping();
-    this.timeoutHandle = null;
-    if (this.state === SleeperState.Sleeping) this.state = SleeperState.Ready;
+    const { resolve } = this.state;
+    resolve();
+    // `this.state.timeoutHandle` fired, so it should already be clear.
+    this.state = { name: "READY" };
   }
 
   /**
@@ -100,29 +113,26 @@ export class Sleeper {
    * This can be called at any time, and any number of times.
    */
   cancelCurrentAndFutureSleeps(): void {
-    log.trace("cancelCurrentAndFutureSleeps");
-    this.state = SleeperState.CanceledForAllTime;
-    this.resolveIfSleeping();
+    log.trace("cancelCurrentAndFutureSleeps in", this.state.name);
+    switch (this.state.name) {
+      case "READY": {
+        this.state = { name: "CANCELED_FOR_ALL_TIME" };
+        break;
+      }
 
-    // Even though this timeout will do nothing, clear it so that it doesn't
-    // keep the process running.
-    if (this.timeoutHandle !== null) {
-      clearTimeout(this.timeoutHandle);
-      this.timeoutHandle = null;
-    }
-  }
+      case "SLEEPING": {
+        const { resolve, timeoutHandle } = this.state;
+        clearTimeout(timeoutHandle);
+        resolve();
+        this.state = { name: "CANCELED_FOR_ALL_TIME" };
+        break;
+      }
 
-  /** If we have `this.resolve`, call it. */
-  private resolveIfSleeping(): void {
-    log.trace("resolveIfSleeping", this.resolve);
-    assert(
-      this.state === SleeperState.Sleeping ||
-        this.state == SleeperState.CanceledForAllTime,
-      "Tried to resolve our promise when we were already awake"
-    );
-    if (this.resolve) {
-      this.resolve();
-      this.resolve = null;
+      case "CANCELED_FOR_ALL_TIME":
+        break;
+
+      default:
+        assert.fail("Sleeper is in an impossible state");
     }
   }
 }
