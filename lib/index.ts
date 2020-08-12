@@ -1,5 +1,4 @@
 import redis, { ClientOpts as RedisOpts } from "redis";
-import onDeath from "death";
 
 import { AsyncRedis } from "./asyncRedis";
 import { Lock, LockError, LockExpiredError, LockTakenError } from "./lock";
@@ -105,9 +104,6 @@ export class LockAndCache {
   /** The Redis client we use for caching. */
   private _cacheClient: AsyncRedis;
 
-  /** Call this function to disable our SIGTERM, etc., callback. */
-  private _cancelProcessDeathHandler: () => void;
-
   /**
    * Create a new `LockAndCache`.
    *
@@ -134,15 +130,6 @@ export class LockAndCache {
     log.trace("creating LockAndCache");
     this._lockClient = new AsyncRedis(lockClient);
     this._cacheClient = new AsyncRedis(cacheClient);
-
-    // TODO: The Node `redis` module will block our program from shutting down
-    // unless we manually quit the client. So we'd like  to install a process
-    // exit handler that runs automatically when we're trying to shut down to
-    // clean up Redis.
-    //
-    // But this only runs on SIGTERM and SIGINT, which is probably not what we
-    // want.
-    this._cancelProcessDeathHandler = onDeath(() => this.close());
   }
 
   /**
@@ -193,7 +180,6 @@ export class LockAndCache {
    * Shut down this cache manager. No other functions may be called after this.
    */
   close(): void {
-    this._cancelProcessDeathHandler();
     log.debug("closing cache connections");
     this._lockClient
       .quit()

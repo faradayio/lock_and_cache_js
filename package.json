@@ -35,7 +35,6 @@
     "dist/lib/**/*.js"
   ],
   "devDependencies": {
-    "@types/death": "^1.1.0",
     "@types/mocha": "^8.0.2",
     "@types/node": "^14.0.27",
     "@types/redis": "^2.8.25",
@@ -54,7 +53,6 @@
     "lint"
   ],
   "dependencies": {
-    "death": "^1.1.0",
     "redis": "^2.6.2"
   }
 }
