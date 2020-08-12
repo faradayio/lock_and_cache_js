@@ -7,29 +7,18 @@ Most caching libraries don't do locking, meaning that >1 process can be calculat
 ## Quickstart
 
 ```ts
-import { LockAndCache } from "../lib";
+import { LockAndCache } from "lock_and_cache";
 
 const cache = new LockAndCache();
 
-// Standalone mode.
-function getStockQuote(symbol: string) {
-  return cache.get(["stock", symbol], { ttl: 60 }, async () => {
-    // Fetch stock price from remote source, cache for one minute.
-    //
-    // Calling this multiple times in parallel will only run it once.
-    return 100;
-  });
-}
-
-// Wrap mode
-async function stockQuoteHelper(symbol: string) {
+async function computeStockQuote(symbol: string) {
   // Fetch stock price from remote source, cache for one minute.
   //
   // Calling this multiple times in parallel will only run it once the cache key
   // is based on the function name and arguments.
   return 100;
 }
-const stockQuote = cache.wrap({ ttl: 60 }, stockQuoteHelper);
+const stockQuote = cache.wrap({ ttl: 60 }, computeStockQuote);
 
 // If you forget this, your process will never exit.
 cache.close();
@@ -56,13 +45,7 @@ As you can see, most caching libraries only take care of (1) and (4) (well, and 
 
 ## Setup
 
-Just setting REDIS_URL in your environment is enough.
-
-```sh
-export REDIS_URL=redis://redis:6379/2
-```
-
-If you want to put the cache and the locks in different places (which is useful if you want to invalidate the cache without messing with any locks currently held), you can do:
+By default, you probably want to put locks and caches in separate databases:
 
 ```sh
 export CACHE_URL=redis://redis:6379/2

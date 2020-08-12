@@ -1,6 +1,7 @@
 module.exports = {
   root: true,
   parser: "@typescript-eslint/parser",
+  // We need this for no-floating-promises.
   parserOptions: {
     project: "tsconfig.json",
     tsconfigRootDir: __dirname,
@@ -12,6 +13,8 @@ module.exports = {
     "prettier/@typescript-eslint",
   ],
   rules: {
+    // Try to catch forgotten `await` calls, which usually result in frustrating
+    // bugs.
     "@typescript-eslint/no-floating-promises": ["warn"],
   },
 };
