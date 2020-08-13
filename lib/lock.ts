@@ -240,7 +240,7 @@ export class Lock {
       this.key,
       this.secret,
       "nx",
-      "px",
+      "ex",
       this.heartbeatExpiresSecs
     );
     if (!r) {
@@ -252,7 +252,7 @@ export class Lock {
   private async extendRedisLock(): Promise<void> {
     const r = await this.redis.eval(
       `if redis.call("get", KEYS[1]) == ARGV[1] then
-        return redis.call("pexpire", KEYS[1], ARGV[2])
+        return redis.call("expire", KEYS[1], ARGV[2])
       else
         if redis.call("get", KEYS[1]) == false then
           return -1
@@ -267,7 +267,7 @@ export class Lock {
     );
     if (r === 0) {
       this.state = LockState.DiedWithRedisError;
-      throw new UnexpectedLockError("pexpire failed; this should NEVER happen");
+      throw new UnexpectedLockError("expire failed; this should NEVER happen");
     }
     if (r === -1) {
       this.state = LockState.DiedWithRedisError;
