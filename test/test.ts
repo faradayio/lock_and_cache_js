@@ -19,7 +19,7 @@ describe("cache", () => {
   after(async () => cache.close());
 
   describe("cache.wrap(f)", () => {
-    const cachedDouble = cache.wrap({ ttl: 1 }, double);
+    const cachedDouble = cache.wrap({ ttl: 3 }, double);
 
     it("should cache the first call to f", async () => {
       let four = await cachedDouble(2);
@@ -43,7 +43,7 @@ describe("cache", () => {
       // with two caches.
       const cache2 = new LockAndCache();
       try {
-        const cachedDouble2 = cache2.wrap({ ttl: 1 }, double);
+        const cachedDouble2 = cache2.wrap({ ttl: 3 }, double);
         const results = await Promise.all([
           ...[10, 20, 20, 10].map((d) => cachedDouble(d)),
           ...[10, 20, 20, 10].map((d) => cachedDouble2(d)),
