@@ -41,6 +41,17 @@ const DEFAULT_TTL = 600;
  */
 const ERROR_TTL = 1;
 
+/**
+ * If we find a value in Redis, how long should we recache it for in our RAM
+ * cache?
+ *
+ * Ideally we'd use the remaining TTL in Redis, and not this hard-coded value.
+ * But we have no easy way to get that. So we try to choose something shorter
+ * than most common TTLs, assuming that it's OK to periodically refetch this
+ * value from a Redis, which should have it with a longer TTL.
+ */
+const LOCAL_RECACHE_TTL = 15;
+
 /** What Redis URL should we use by default? */
 export function defaultRedisUrl(): string {
   return process.env.REDIS_URL || "redis://localhost:6379";
@@ -158,9 +169,19 @@ export class LockAndCache {
     // `_cacheClient` returns `undefined`. `== null` is the idiomatic way to
     // check for either.
     let serializedValue: string | undefined | null = this._lruCache.get(keyStr);
-    if (serializeValue == null) {
+
+    // It wasn't in our LRU, so let's try the network.
+    if (serializedValue == null) {
       serializedValue = await this._cacheClient.get(keyStr);
+      if (serializedValue != null) {
+        // We found it in Redis but not in RAM, so let's cache it here.
+        log.trace(`re-caching ${keyStr} from Redis into RAM`);
+        this._lruCache.set(keyStr, serializedValue, LOCAL_RECACHE_TTL * 1000);
+      }
     }
+
+    // If we didn't find anything, raise an error. If we did, deserialize it
+    // (and `throw` it if it was an error).
     if (serializedValue == null) {
       throw new KeyNotFoundError(keyStr);
     }

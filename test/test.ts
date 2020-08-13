@@ -38,6 +38,23 @@ describe("cache", () => {
       assert.strictEqual(executionCount, 3);
     });
 
+    it("should cache across multiple caches", async () => {
+      // We want to trigger the "recache in RAM" logic, which can only happen
+      // with two caches.
+      const cache2 = new LockAndCache();
+      try {
+        const cachedDouble2 = cache2.wrap({ ttl: 1 }, double);
+        const results = await Promise.all([
+          ...[10, 20, 20, 10].map((d) => cachedDouble(d)),
+          ...[10, 20, 20, 10].map((d) => cachedDouble2(d)),
+        ]);
+        assert.deepStrictEqual(results, [20, 40, 40, 20, 20, 40, 40, 20]);
+        assert.strictEqual(executionCount, 2);
+      } finally {
+        cache2.close();
+      }
+    });
+
     it("should cache `undefined`", async () => {
       let undefExecutionCount = 0;
       async function undef() {
