@@ -18,7 +18,7 @@ function randomString(): string {
 function currentTimeInSeconds(): number {
   // This is a standard JavaScript trick to get seconds from a `Date` by
   // coercing it from a number-like object to a true number.
-  return +new Date();
+  return +new Date() / 1000;
 }
 
 /** A lock-related error. */
