@@ -1,3 +1,4 @@
+import LRU from "lru-cache";
 import redis, { ClientOpts as RedisOpts } from "redis";
 
 import { AsyncRedis } from "./asyncRedis";
@@ -105,6 +106,16 @@ export class LockAndCache {
   private _cacheClient: AsyncRedis;
 
   /**
+   * An in-memory cache that deletes the "least recently used" (LRU) items.
+   *
+   * We use this to implement a fast caching layer that doesn't require hitting
+   * Redis in the simple case. We could use an all-in-one solution like
+   * `cache-manager`, but most of those libraries are huge and contain tons of
+   * callback-era code.
+   */
+  private _lruCache: LRU<string, string>;
+
+  /**
    * Create a new `LockAndCache`.
    *
    * ```
@@ -122,14 +133,17 @@ export class LockAndCache {
    * @param caches Caches to use. Defaults to `tieredCache()`.
    * @param lockClient Redis client to use for locking. Defaults to using
    * `DEFAULT_REDIS_OPTIONS`.
+   * @param memoryCacheSize How many items should we also cache in local memory?
    */
   constructor({
     lockClient = defaultRedisLockClient(),
     cacheClient = defaultRedisCacheClient(),
+    memoryCacheSize = 100,
   } = {}) {
     log.trace("creating LockAndCache");
     this._lockClient = new AsyncRedis(lockClient);
     this._cacheClient = new AsyncRedis(cacheClient);
+    this._lruCache = new LRU<string, string>({ max: memoryCacheSize });
   }
 
   /**
@@ -139,8 +153,30 @@ export class LockAndCache {
    */
   private async _cacheGet<T>(key: CacheKey): Promise<T> {
     const keyStr = serializeKey(key);
-    const serializedValue = await this._cacheClient.get(keyStr);
-    if (serializedValue === null) {
+
+    // Check our caches. `_lruCache` returns `null` on a cache miss, and
+    // `_cacheClient` returns `undefined`. `== null` is the idiomatic way to
+    // check for either.
+    let serializedValue: string | undefined | null = this._lruCache.get(keyStr);
+
+    // It wasn't in our LRU, so let's try the network.
+    if (serializedValue == null) {
+      serializedValue = await this._cacheClient.get(keyStr);
+      if (serializedValue != null) {
+        // We found it in Redis but not in RAM, so let's re-cache it here.
+        const redisTtl = await this._cacheClient.ttl(keyStr);
+        if (redisTtl > 0) {
+          log.trace(
+            `re-caching ${keyStr} from Redis into RAM with TTL ${redisTtl}`
+          );
+          this._lruCache.set(keyStr, serializedValue, redisTtl * 1000);
+        }
+      }
+    }
+
+    // If we didn't find anything, raise an error. If we did, deserialize it
+    // (and `throw` it if it was an error).
+    if (serializedValue == null) {
       throw new KeyNotFoundError(keyStr);
     }
     return deserializeValueOrError<T>(serializedValue);
@@ -153,6 +189,7 @@ export class LockAndCache {
     ttl: number
   ): Promise<void> {
     const keyStr = serializeKey(key);
+    this._lruCache.set(keyStr, serializedData, ttl * 1000);
     const r = await this._cacheClient.set(keyStr, serializedData, "ex", ttl);
     if (r !== "OK")
       throw new Error(`error caching at ${keyStr}: ${JSON.stringify(r)}`);
