@@ -23,26 +23,10 @@ jobs:
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v2
-      - name: Install packages
-        run: |
-          set -euo pipefail
-          sudo apt-get -y update
-          sudo apt-get -y install netcat
       - name: Install dependencies
         run: npm install
-      - name: Start Redis test server
-        # Start a database and wait for it to listen to a port.
-        # https://stackoverflow.com/a/52795933
-        run: |
-          set -euo pipefail
-          docker run --name redis -p 6379:6379 -d redis
-          while ! nc -z localhost 6379; do
-            docker logs --tail 10 redis
-            echo "==== Waiting for Redis"
-            sleep 5
-          done
       - name: Test
-        run: env REDIS_URL=redis://127.0.0.1:6379/ npm test
+        run: docker-compose run test
       - name: Lint
         run: npm run lint
       - name: Audit
