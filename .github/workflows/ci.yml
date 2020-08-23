@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: npm install
       - name: Test
-        run: docker-compose run test
+        run: npm test
       - name: Lint
         run: npm run lint
       - name: Audit
