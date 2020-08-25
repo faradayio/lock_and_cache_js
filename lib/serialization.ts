@@ -1,4 +1,5 @@
 import stableStringify from "json-stable-stringify";
+import log from "./log";
 
 /** Details of a serialized error. */
 interface SerializedErrorDetails {
@@ -64,13 +65,13 @@ export function serializeValue(value: unknown): string {
 
 /** Serialize an error for caching. */
 export function serializeError(err: Error): string {
+  log.error("caching error:", err);
   let serializedError: SerializedError;
   if (err instanceof Error) {
     serializedError = {};
     if (err.name) serializedError.name = err.name;
     if (err.message) serializedError.message = err.message;
     if (err.stack) serializedError.stack = err.stack;
-    Object.assign(serializedError, err); // retain custom properties
   } else {
     serializedError = String(err);
   }

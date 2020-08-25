@@ -125,5 +125,28 @@ describe("cache", () => {
         );
       }
     });
+
+    it("should cache circular errors correctly", async () => {
+      class CircularError extends Error {
+        private circular: CircularError;
+        constructor(message: string) {
+          super(message);
+          this.circular = this;
+        }
+      }
+
+      try {
+        await cache.get("fail_circular_test", { ttl: 1 }, () =>
+          Promise.reject(new CircularError("circular!"))
+        );
+        throw new Error("should not resolve");
+      } catch (err) {
+        assert.strictEqual(
+          err.message,
+          "circular!",
+          "should propagate error message"
+        );
+      }
+    });
   });
 });
