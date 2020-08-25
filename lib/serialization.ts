@@ -1,3 +1,5 @@
+import stableStringify from "json-stable-stringify";
+
 /** Details of a serialized error. */
 interface SerializedErrorDetails {
   name?: string;
@@ -37,7 +39,13 @@ type DataOrErr<T> = T | LockAndCacheErrorWrapper;
  *
  * These may only contain values that we can serialize consistently.
  */
-export type CacheKey = string | number | boolean | null | CacheKey[];
+export type CacheKey =
+  | string
+  | number
+  | boolean
+  | null
+  | CacheKey[]
+  | { [key: string]: CacheKey };
 
 /**
  * Serialize a cache key. Must not be used on objects.
@@ -45,7 +53,7 @@ export type CacheKey = string | number | boolean | null | CacheKey[];
  * This should always return the same string for a given `key`.
  */
 export function serializeKey(key: CacheKey): string {
-  return JSON.stringify(key);
+  return stableStringify(key);
 }
 
 /** Serialize a value for caching. */

@@ -90,6 +90,16 @@ describe("cache", () => {
       assert.strictEqual(executionCount, 3);
     });
 
+    it("should support records as keys", async () => {
+      await cache.get(["record", { a: 1, b: 2 }], { ttl: 1 }, async () =>
+        double(1)
+      );
+      await cache.get(["record", { b: 2, a: 1 }], { ttl: 1 }, async () =>
+        double(1)
+      );
+      assert.strictEqual(executionCount, 1);
+    });
+
     it("should cache errors correctly", async () => {
       const expectedErr = new Error("test me please");
       try {
