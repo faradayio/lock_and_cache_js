@@ -1,6 +1,7 @@
 import assert from "assert";
 
 import { LockAndCache } from "../lib";
+import { serializeKey } from "../lib/serialization";
 
 describe("cache", () => {
   const cache = new LockAndCache();
@@ -148,5 +149,14 @@ describe("cache", () => {
         );
       }
     });
+  });
+});
+
+describe("serializeKey", () => {
+  it("should normalize objects", () => {
+    assert.strictEqual(
+      serializeKey({ c: 1, b: [false, "s"], a: undefined }),
+      '{"b":[false,"s"],"c":1}'
+    );
   });
 });

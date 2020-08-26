@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.0.0-beta.5] - 2020-08-26
+
+### Added
+
+- Allow objects with potentially `undefined` fields to be used as `CacheKey` values. Any fields containing `undefined` will be omitted during serialization.
+
 ## [6.0.0-beta.4] - 2020-08-25
 
 ### Changed

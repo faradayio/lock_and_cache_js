@@ -46,7 +46,8 @@ export type CacheKey =
   | boolean
   | null
   | CacheKey[]
-  | { [key: string]: CacheKey };
+  // Keys with a value of "undefined" will be omitted entirely.
+  | { [key: string]: CacheKey | undefined };
 
 /**
  * Serialize a cache key. Must not be used on objects.
