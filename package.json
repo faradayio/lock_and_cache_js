@@ -28,7 +28,7 @@
     "lint": "eslint lib/**/*.ts test/**/*.ts",
     "prepublishOnly": "rm -rf dist && npm run build",
     "test-helper": "LOCK_AND_CACHE_LOG_LEVEL=trace mocha --require ts-node/register test/**/*.ts",
-    "test": "docker-compose run test"
+    "test": "docker compose run test"
   },
   "files": [
     "dist/lib/**/*.d.ts",

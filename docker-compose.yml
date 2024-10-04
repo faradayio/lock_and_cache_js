@@ -1,6 +1,6 @@
 # A test environment.
 #
-# You can invoke this using `docker-compose run test`.
+# You can invoke this using `docker compose run test`.
 
 version: "3.3"
 services:
